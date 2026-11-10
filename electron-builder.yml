@@ -187,8 +187,10 @@ publish:
   # from a private repo are impossible, and a token baked into the app
   # would be a leak. desktop:dist passes no --publish flag, so builds never
   # upload; publishing happens at release time (GH_TOKEN + --publish).
+  # Music-study fork: updates come from the fork's own releases, so an
+  # upstream release never replaces the fork's features.
   - provider: github
-    owner: amosblomqvist
-    repo: learnharness
+    owner: UncleKnuckles
+    repo: learnharnessmusik
     # All three CI jobs contribute assets; only the owner publishes it.
     releaseType: draft

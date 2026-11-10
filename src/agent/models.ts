@@ -7,6 +7,7 @@ import {
 	type Model,
 	type Models,
 	type MutableModels,
+	type Provider,
 	type StreamFunction,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -89,12 +90,38 @@ export function piModels() {
 			// replace its lazy forwarding; preserve the native factory's auth/catalog.
 			collection.setProvider(provider.id === "amazon-bedrock"
 				? { ...provider, ...lazyApi(() => import("@earendil-works/pi-ai/api/bedrock-converse-stream")) }
-				: provider);
+				: provider.id === "anthropic" ? withFable52(provider) : provider);
 		}
 		collection.setProvider(createClaudeCodeProvider(streamClaudeCode));
 	}
 	providerSource?.sync(collection);
 	return collection;
+}
+
+const FABLE_52_ID = "claude-fable-5-2";
+
+/** Claude Fable 5.2 postdates the bundled pi-ai catalog. It keeps Fable 5.1's
+ *  request surface (adaptive-only thinking, effort low..max, 1M context,
+ *  128K output), so the catalog entry is 5.1's with 5.2's id, name and price. */
+export function withFable52(provider: Provider): Provider {
+	const extend = <T extends Model<Api>>(models: readonly T[]): readonly T[] => {
+		if (models.some((model) => model.id === FABLE_52_ID)) return models;
+		const base = models.find((model) => model.id === "claude-fable-5-1");
+		if (!base) return models;
+		const fable: T = {
+			...base,
+			id: FABLE_52_ID,
+			name: "Claude Fable 5.2",
+			cost: { ...base.cost, input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+		};
+		return [...models, fable];
+	};
+	const getAllModels = provider.getAllModels?.bind(provider);
+	return {
+		...provider,
+		getModels: () => extend(provider.getModels()),
+		...(getAllModels ? { getAllModels: () => extend(getAllModels() as readonly Model<Api>[]) as ReturnType<NonNullable<Provider["getAllModels"]>> } : {}),
+	};
 }
 
 /** OpenRouter API key (BYOK); tests never read this — they inject engines. */

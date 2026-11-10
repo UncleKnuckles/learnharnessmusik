@@ -17,8 +17,11 @@
  * healthy. The dock's chips + graph refetch track progress live through
  * /api/graph/status, as with session runs.
  */
-import { convertPdf, extraction, joinPages, NotesImportError, sourceDirectory } from "@/src/server";
-import { MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, validNotesPath } from "@/lib/notes-import-limits.ts";
+import {
+	alreadyImported, contentHash, convertPdf, detectAudio, detectImage, extraction, joinPages, MediaImportError,
+	NotesImportError, recordImported, sourceDirectory, transcribeAudio, transcribeImage,
+} from "@/src/server";
+import { MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, MAX_PDF_PAGES, TOO_BIG_MESSAGE, TOO_LONG_MESSAGE, validNotesPath } from "@/lib/notes-import-limits.ts";
 import {
 	emit,
 	ModelsNotConfiguredError,
@@ -48,21 +51,42 @@ interface ImportResult {
 	notice?: string;
 }
 
-const MAX_PDF_PAGES = 1000;
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
 
 type NotesFile = { kind: "notes"; text: string; notice?: string } | { kind: "refused"; error: string };
 
-/** A PDF becomes page-marked Markdown; any other file is read as text, as before. */
-async function readNotesFile(file: File): Promise<NotesFile> {
-	const bytes = new Uint8Array(await file.arrayBuffer());
-	if (!PDF_MAGIC.every((byte, i) => bytes[i] === byte)) return { kind: "notes", text: new TextDecoder().decode(bytes) };
+/** A PDF becomes page-marked Markdown; an image is transcribed by the vision
+ *  model and audio by Deepgram (music-study fork); any other file is read as
+ *  text, as before. */
+async function readNotesFile(file: File, bytes: Uint8Array): Promise<NotesFile> {
+	const image = detectImage(bytes);
+	if (image) {
+		try {
+			const { text, model } = await transcribeImage(bytes, image);
+			return { kind: "notes", text: `# ${file.name}\n\n${text}`, notice: `Transcribed from the image by ${model}; check notation and symbols.` };
+		} catch (err) {
+			if (err instanceof MediaImportError) return { kind: "refused", error: err.message };
+			throw err;
+		}
+	}
+	if (!PDF_MAGIC.every((byte, i) => bytes[i] === byte)) {
+		const audio = /\.(?:md|markdown|txt)$/i.test(file.name) ? null : detectAudio(bytes, file.name);
+		if (audio) {
+			try {
+				return { kind: "notes", text: `# ${file.name} (transcript)\n\n${await transcribeAudio(bytes, audio)}`, notice: "Transcribed from audio by Deepgram; names and terms may be misheard." };
+			} catch (err) {
+				if (err instanceof MediaImportError) return { kind: "refused", error: err.message };
+				throw err;
+			}
+		}
+		return { kind: "notes", text: new TextDecoder().decode(bytes) };
+	}
 	const pdf = await convertPdf(bytes, MAX_PDF_PAGES);
 	switch (pdf.kind) {
 		case "unreadable":
 			return { kind: "refused", error: "Could not open this PDF." };
 		case "too-long":
-			return { kind: "refused", error: "Too long. Max 1,000 pages." };
+			return { kind: "refused", error: TOO_LONG_MESSAGE };
 		case "converted": {
 			const text = joinPages(pdf.pages);
 			if (!text) return { kind: "refused", error: "OCR not supported yet." };
@@ -121,7 +145,7 @@ export async function POST(request: Request) {
 	}
 	const files = form.getAll("files").filter((f): f is File => f instanceof File);
 	if (files.reduce((total, file) => total + file.size, 0) > MAX_IMPORT_BYTES) {
-		return Response.json({ results: [] as ImportResult[], error: "Too big. Max 25 MB." }, { status: 413 });
+		return Response.json({ results: [] as ImportResult[], error: TOO_BIG_MESSAGE }, { status: 413 });
 	}
 	if (files.length === 0) {
 		return Response.json({ results: [] as ImportResult[], error: "no files" }, { status: 400 });
@@ -145,13 +169,22 @@ export async function POST(request: Request) {
 			if (!next) return;
 			const { file, requestIndex, filePath } = next;
 			try {
-				const notes = await readNotesFile(file);
+				const bytes = new Uint8Array(await file.arrayBuffer());
+				const hash = contentHash(bytes);
+				// Music-study fork: an unchanged file that already completed is
+				// skipped, so re-importing a whole folder only does new work.
+				if (alreadyImported(filePath, hash)) {
+					results.push({ filePath, requestIndex, outcome: "completed", ok: true, stats: { nodes: 0, chains: 0 }, notice: "Already in the graph; skipped." });
+					continue;
+				}
+				const notes = await readNotesFile(file, bytes);
 				if (notes.kind === "refused") {
 					results.push({ filePath, requestIndex, outcome: "failed", ok: false, error: notes.error });
 					continue;
 				}
 				sourceDirectory.registerImport(filePath);
 				const stats = await extraction.importNotes({ filePath, text: notes.text });
+				recordImported(filePath, hash);
 				results.push({ filePath, requestIndex, outcome: "completed", ok: true, stats, ...(notes.notice ? { notice: notes.notice } : {}) });
 			} catch (err) {
 				if (err instanceof ModelsNotConfiguredError) {

@@ -41,6 +41,7 @@ import { ProviderMenuList } from "./model-menu.tsx";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { DictationLanguageSetting } from "@/components/dictation-language";
+import { DictationEngineSetting } from "@/components/dictation-engine";
 
 /** One pi-ai provider with plain API-key auth (the Platform seam —
  *  derived from pi-ai's own env-key table; no drift possible). */
@@ -599,6 +600,7 @@ export function KeysSection({
 					/>
 				))}
 				{label === "Dictation" && <>
+					<DictationEngineSetting />
 					<DictationLanguageSetting />
 					<p data-testid="dictation-setup-hint" className="px-1 text-[11px] leading-relaxed text-muted-foreground/70">
 						Create a <a
@@ -606,7 +608,12 @@ export function KeysSection({
 							target="_blank"
 							rel="noreferrer"
 							className="underline underline-offset-2 hover:text-foreground"
-						>Deepgram API key</a> with the Member role or higher, then add it above.
+						>Deepgram API key</a> with the Member role or higher, then add it above. Or install <a
+							href="https://handy.computer"
+							target="_blank"
+							rel="noreferrer"
+							className="underline underline-offset-2 hover:text-foreground"
+						>Handy</a> for free local dictation without a key: the Dictate button then starts and stops Handy, and Handy types into the composer.
 					</p>
 				</>}
 			</SettingsGroup>)}

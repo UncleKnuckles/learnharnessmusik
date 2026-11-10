@@ -21,6 +21,8 @@ export const CLAUDE_CODE_MODELS: readonly Model<Api>[] = [
 	{ ...SHARED_MODEL_FIELDS, id: "opus", name: "Claude Opus" },
 	{ ...SHARED_MODEL_FIELDS, id: "sonnet", name: "Claude Sonnet" },
 	{ ...SHARED_MODEL_FIELDS, id: "haiku", name: "Claude Haiku" },
+	// Full model ids: the CLI's --model accepts them as well as the aliases.
+	{ ...SHARED_MODEL_FIELDS, id: "claude-fable-5-2", name: "Claude Fable 5.2" },
 ];
 
 export function createClaudeCodeProvider(streamSimple: StreamFunction<Api, SimpleStreamOptions>): Provider {
