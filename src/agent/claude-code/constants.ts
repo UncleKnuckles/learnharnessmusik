@@ -4,5 +4,5 @@ export const CLAUDE_CODE_API = "claude-code-cli";
 
 export enum ClaudeCodeError {
 	CliNotFound = "claude CLI not found",
-	NotSignedIn = "not signed in",
+	NotSignedIn = "Claude Code is not signed in. Open a terminal, run `claude`, sign in with /login, then restart LearnHarness. Or pick an API-key model in Settings → Models.",
 }

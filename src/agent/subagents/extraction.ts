@@ -444,6 +444,20 @@ of the discourse. An idea earns its place only when the source's arguments run t
 notation glosses, and restatements that no argument needs are not core ideas.`,
 )}\n\n${SESSION_MESSAGE_ID_RULE}`;
 
+/** Music-study fork: imported notes are mostly German-language music theory
+ *  (Formenlehre, Funktionstheorie, Tonsatz, Kadenzen), often beside a Russian
+ *  translation of the same script. Kept as one appended section so the shared
+ *  extraction contracts above stay untouched. */
+export const MUSIC_THEORY_NOTES = `MUSIC THEORY SOURCES: these notes are usually music theory — Formenlehre (Satz, Periode, Liedform,
+Sonatenform), harmony and Funktionstheorie (T, S, D, Tp, Sp, Dp, D7, the shortened dominant, Neapolitan,
+secondary dominants), voice leading and Tonsatz (four-part chorale writing, forbidden parallels, doubling),
+cadences and their qualities (Ganzschluss, Halbschluss, Trugschluss, plagal), plus composers, works and
+literature. Keep each technical term in the language the source uses — usually German — and add the common
+English or Russian equivalent in parentheses only where it helps recognition. Keep function symbols,
+figured-bass numbers, scale degrees and bar references exactly as written. When the same material appears
+both in German and in a translation, it is one idea, not two. Course logistics (exam dates, requirements
+lists, page numbers) are not knowledge about music unless they state a rule of the craft.`;
+
 export const NOTES_EXTRACTOR_INSTRUCTIONS = composeExtractionInstructions(
 	NOTES_PREAMBLE,
 	`THE GOAL: bring the knowledge in these notes into the learner’s knowledge graph. Notes may contain
@@ -456,7 +470,7 @@ relationships. A sketch need not spell out every intermediate step, but a topic 
 dependency alone is not a derivation. Where the notes just state an idea, record it as a proposition
 rather than constructing an argument for it. Select enough detail to preserve the knowledge, without
 expanding the note into a full treatment of the subject.`,
-);
+) + `\n\n${MUSIC_THEORY_NOTES}`;
 
 // ── the same-source digest (owner, 2026-09-30 evening) ──
 //
@@ -1410,7 +1424,9 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			if (rejected.length > 0 || settled.length !== chunks.length) {
 				const aborted = rejected.some((r) => r.reason instanceof Error && r.reason.name === "AbortError");
 				const outcome = aborted ? "aborted" : settled.some((r) => r.status === "fulfilled") ? "partial" : "failed";
-				const details = rejected.map((r) => r.reason instanceof Error ? r.reason.message : String(r.reason)).join("; ");
+				// One failure cause per message: every chunk of a signed-out run fails
+				// the same way, and repeating it per chunk buries the actionable text.
+				const details = [...new Set(rejected.map((r) => r.reason instanceof Error ? r.reason.message : String(r.reason)))].join("; ");
 				throw new NotesImportError(outcome, mergedStats, details || "Notes import did not complete");
 			}
 			console.info(

@@ -7,6 +7,7 @@ import { Hint } from "@/components/ui/hint";
 import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
+import { fetchHandyInstalled, getDictationEngine } from "@/components/dictation-engine";
 export { isDictationActive } from "@/components/dictation-state";
 
 /**
@@ -108,7 +109,7 @@ export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
  * (desktop) or .env.local (dev)") — the surface says the short truth
  * instead. Exported for pins; the errored idle button's click recognizes
  * it and deep-links Settings → Keys → the Deepgram row. */
-export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
+export const DICTATION_KEYLESS = "Dictation needs a Deepgram key or Handy";
 
 /** Mint a fresh short-lived token (the route holds the real key
  *  server-side). Module-level: the start path's warm cache and the
@@ -163,6 +164,66 @@ export function createWarmMinter(
 }
 
 const warmTokens = createWarmMinter(mintFreshToken);
+
+/* ── Handy engine (music-study fork) ──────────────────────────────────────
+ * Handy (handy.computer) records and transcribes locally and pastes into
+ * the focused field. LearnHarness only keeps the composer focused and asks
+ * the server to send Handy its --toggle-transcription / --cancel flags. */
+export type DictationEngineInUse = "deepgram" | "handy";
+
+async function postHandy(action: "toggle" | "cancel"): Promise<void> {
+	const res = await fetch("/api/stt/handy", {
+		method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+	});
+	if (!res.ok) {
+		const data = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(data.error ?? `Handy control failed (${res.status})`);
+	}
+}
+
+function isEditable(el: Element | null): el is HTMLElement {
+	if (!(el instanceof HTMLElement)) return false;
+	if (el.isContentEditable || el instanceof HTMLTextAreaElement) return true;
+	return el instanceof HTMLInputElement && (el.type === "text" || el.type === "search");
+}
+
+/** Where Handy will paste: the focused editable field, else the composer. */
+function handyPasteTarget(): HTMLElement | null {
+	if (isEditable(document.activeElement)) return document.activeElement;
+	const fallback = document.querySelector('[data-testid="composer"] [data-file-path-input]') ?? document.querySelector("[data-file-path-input]");
+	return fallback instanceof HTMLElement ? fallback : null;
+}
+
+function fieldText(el: HTMLElement): string {
+	return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement ? el.value : el.textContent ?? "";
+}
+
+/** Resolve once Handy's paste changed the field, or after `timeoutMs`. */
+function waitForPaste(el: HTMLElement | null, before: string | null, timeoutMs = 8000): Promise<void> {
+	return new Promise((resolve) => {
+		if (!el || before === null) { setTimeout(resolve, 1500); return; }
+		const started = Date.now();
+		const id = setInterval(() => {
+			if (fieldText(el) !== before || Date.now() - started > timeoutMs) {
+				clearInterval(id);
+				resolve();
+			}
+		}, 150);
+	});
+}
+
+/** "auto": Deepgram when its key exists, Handy when it does not (and is installed). */
+async function resolveEngine(): Promise<DictationEngineInUse> {
+	const preference = getDictationEngine();
+	if (preference !== "auto") return preference;
+	try {
+		await warmTokens.mint();
+		return "deepgram";
+	} catch (e) {
+		if (e instanceof Error && e.message === DICTATION_KEYLESS && await fetchHandyInstalled()) return "handy";
+		return "deepgram";
+	}
+}
 
 /* Persistent capture graph (mitigation C, owner 2026-09-27): one
  * app-lifetime AudioContext + a module-load memo. Created under the
@@ -246,6 +307,8 @@ export type DictationPhase = "idle" | "connecting" | "recording" | "stopping";
 
 export type Dictation = {
 	phase: DictationPhase;
+	/** Which engine the current (or last) run uses. */
+	engine: DictationEngineInUse;
 	/** Terminal-state explanation, shown inside the wide button (cleared on the next start). */
 	error: string | null;
 	/** Latest observed RMS, 0..1 — sampled by the meter's own tick, never reset. */
@@ -285,6 +348,9 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	const { getLanguage } = useDictationLanguage();
 	const [phase, setPhase] = useState<DictationPhase>("idle");
 	const [error, setError] = useState<string | null>(null);
+	const [engine, setEngine] = useState<DictationEngineInUse>("deepgram");
+	const engineRef = useRef<DictationEngineInUse>("deepgram");
+	const handyTargetRef = useRef<HTMLElement | null>(null);
 	/** Latest RMS from the worklet — the meter samples this (dictate pattern). */
 	const levelRef = useRef(0);
 	/** The page's fallback append — kept fresh per render so a mid-recording
@@ -438,6 +504,30 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		bufferRef.current = []; // fresh run, fresh buffer (round 2)
 		pendingRef.current = []; // fresh run, fresh queue (mitigation A)
 		const gen = ++genRef.current;
+		engineRef.current = "deepgram";
+		const chosen = await resolveEngine();
+		if (gen !== genRef.current) return;
+		if (chosen === "handy") {
+			engineRef.current = "handy";
+			setEngine("handy");
+			const target = handyPasteTarget();
+			handyTargetRef.current = target;
+			target?.focus();
+			try {
+				await postHandy("toggle");
+			} catch (e) {
+				if (gen !== genRef.current) return;
+				setError(e instanceof Error ? e.message : "Handy unavailable");
+				engineRef.current = "deepgram";
+				cleanup(false);
+				return;
+			}
+			// Cancelled while Handy was starting: stop the recording it began.
+			if (gen !== genRef.current) { void postHandy("cancel").catch(() => {}); return; }
+			setPhase("recording");
+			return;
+		}
+		setEngine("deepgram");
 		let language: DictationLanguage;
 		try {
 			language = await getLanguage();
@@ -532,6 +622,23 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		if (phase !== "recording" && phase !== "connecting") return;
 		setPhase("stopping");
 
+		if (engineRef.current === "handy") {
+			// Handy pastes into the focused field: put focus back first.
+			const target = handyTargetRef.current?.isConnected ? handyTargetRef.current : handyPasteTarget();
+			target?.focus();
+			const before = target ? fieldText(target) : null;
+			postHandy("toggle")
+				.then(() => waitForPaste(target, before))
+				.catch((e: unknown) => { if (gen === genRef.current) setError(e instanceof Error ? e.message : "Handy unavailable"); })
+				.finally(() => {
+					if (gen !== genRef.current) return;
+					engineRef.current = "deepgram";
+					handyTargetRef.current = null;
+					cleanup(false);
+				});
+			return;
+		}
+
 		// Mic dies FIRST — no more audio enqueues (dictate pattern). The
 		// per-run nodes die with it; the AudioContext stays (mitigation C).
 		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
@@ -561,6 +668,11 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 
 	const cancel = useCallback(() => {
 		if (phase === "idle") return;
+		if (engineRef.current === "handy") {
+			void postHandy("cancel").catch(() => {});
+			engineRef.current = "deepgram";
+			handyTargetRef.current = null;
+		}
 		// Discard first, teardown second — cleanup() flushes, and the now-empty
 		// buffer makes that flush a no-op. Also kills a "stopping" run: the
 		// flush already underway is abandoned (its timer is cleared inside).
@@ -605,6 +717,10 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			// Navigation cancels capture: invalidate every pending await before
 			// releasing resources, and never append into a different page's input.
 			bufferRef.current = [];
+			if (engineRef.current === "handy") {
+				void postHandy("cancel").catch(() => {});
+				engineRef.current = "deepgram";
+			}
 			cleanup(false);
 		};
 	}, [cleanup]);
@@ -619,6 +735,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 
 	return {
 		phase,
+		engine,
 		error,
 		levelRef,
 		active: phase !== "idle",
@@ -643,7 +760,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
  *             (full text in the tooltip), cleared on the next click.
  */
 export function DictationBar({ dictation }: { dictation: Dictation }) {
-	const { phase, error, levelRef, toggle, active, clearError } = dictation;
+	const { phase, error, levelRef, toggle, active, clearError, engine } = dictation;
 	const { open: openSettings } = useSettingsDialog();
 	/** The keyless click (zero-keys wave, owner dictation trio): the errored
 	 *  idle button deep-links Settings → Keys → the Deepgram row and clears
@@ -701,6 +818,8 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 			>
 				<button
 					type="button"
+					// Keep focus in the composer: Handy pastes into the focused field.
+					onMouseDown={(event) => event.preventDefault()}
 					onClick={() => {
 						if (keyless) {
 							clearError();
@@ -725,6 +844,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 			<Hint label="Stop dictation (Esc)" side="top">
 				<button
 					type="button"
+					onMouseDown={(event) => event.preventDefault()}
 					onClick={toggle}
 					disabled={phase === "stopping"}
 					aria-label="Stop dictation"
@@ -736,7 +856,9 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 				</button>
 			</Hint>
 			<span className="size-1.5 shrink-0 animate-pulse rounded-full bg-destructive" aria-hidden />
-			<div ref={meterRef} className="flex h-4 min-w-0 flex-1 items-center gap-[2px]" data-testid="dictation-meter">
+			{engine === "handy" ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" data-testid="dictation-handy">
+				{phase === "stopping" ? "Handy is transcribing…" : "Handy is listening. Speak, then press Stop."}
+			</span> : <div ref={meterRef} className="flex h-4 min-w-0 flex-1 items-center gap-[2px]" data-testid="dictation-meter">
 				{levels.slice(-cellCount).map((v, i) => (
 					<span
 						key={i}
@@ -744,7 +866,7 @@ export function DictationBar({ dictation }: { dictation: Dictation }) {
 						style={{ height: `${2 + Math.round(v * 14)}px` }}
 					/>
 				))}
-			</div>
+			</div>}
 		</div>
 	);
 }

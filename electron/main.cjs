@@ -199,6 +199,27 @@ function log(line) {
 	}
 }
 
+// ─── Local API discovery for the `learnharness` CLI and MCP server ───────
+// The server listens on a random 127.0.0.1 port behind a per-launch secret.
+// The CLI/MCP bridge (cli/learnharness.mjs) reads both from this owner-only
+// file while the app runs; it is removed again on quit.
+const LOCAL_API_FILE = () => path.join(app.getPath("userData"), "local-api.json");
+
+function writeLocalAPIFile(url, secret) {
+	try {
+		fs.writeFileSync(LOCAL_API_FILE(), JSON.stringify({ url, secret, pid: process.pid }), { mode: 0o600 });
+	} catch (error) {
+		log(`local-api.json not written: ${error && error.message}`);
+	}
+}
+
+function removeLocalAPIFile() {
+	try {
+		const raw = JSON.parse(fs.readFileSync(LOCAL_API_FILE(), "utf8"));
+		if (raw.pid === process.pid) fs.rmSync(LOCAL_API_FILE(), { force: true });
+	} catch {}
+}
+
 function startServer(port) {
 	return new Promise((resolve, reject) => {
 		const child = spawn(
@@ -642,6 +663,7 @@ async function main() {
 
 	// The child must not outlive us — cover every quit path.
 	app.on("before-quit", killServer);
+	app.on("will-quit", removeLocalAPIFile);
 	process.on("exit", killServer);
 	process.on("SIGHUP", killServer);
 
@@ -682,6 +704,7 @@ async function main() {
 		await startServer(new URL(url).port);
 		await waitUntilUp(url);
 		log(`server up: ${url}`);
+		writeLocalAPIFile(url, desktopAPISecret);
 	} else {
 		log(`dev mode: ${devUrl}`);
 	}

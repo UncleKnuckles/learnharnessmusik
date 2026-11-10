@@ -1,6 +1,6 @@
 {
 	"name": "learnharness",
-	"version": "0.5.0",
+	"version": "0.5.0-music.1",
 	"license": "AGPL-3.0-only",
 	"author": {
 		"name": "Amos Blomqvist",
@@ -12,6 +12,9 @@
 	"type": "module",
 	"private": true,
 	"main": "electron/main.cjs",
+	"bin": {
+		"learnharness": "cli/learnharness.mjs"
+	},
 	"scripts": {
 		"dev": "next dev",
 		"build": "next build",
@@ -21,7 +24,9 @@
 		"typecheck": "tsc --noEmit",
 		"desktop:dev": "concurrently -k \"next dev\" \"LH_DEV_URL=http://localhost:3000 electron .\"",
 		"dev:fresh": "bash scripts/dev-fresh.sh",
-		"desktop:dist": "rm -rf dist .next/standalone && next build && node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs && DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} APPLE_KEYCHAIN_PROFILE=LH_NOTARY APPLE_TEAM_ID=JS6XN22HY6 electron-builder --mac --arm64"
+		"desktop:dist": "rm -rf dist .next/standalone && next build && node scripts/smoke-provider-runtime.mjs && node scripts/build-server.mjs && node scripts/smoke-server.mjs && DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} APPLE_KEYCHAIN_PROFILE=LH_NOTARY APPLE_TEAM_ID=JS6XN22HY6 electron-builder --mac --arm64",
+		"cli": "node cli/learnharness.mjs",
+		"mcp": "node cli/learnharness.mjs mcp"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "1.4.0",

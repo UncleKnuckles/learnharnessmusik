@@ -8,6 +8,8 @@
 
 <p align="center"><strong>An agent harness for learning.</strong></p>
 
+> **Music-study fork.** This fork adds image and audio import, lifts the import size limits, skips already-imported files, adds Claude Fable 5.2, Handy dictation, a `learnharness` CLI and an MCP server. See [docs/MUSIC-FORK.md](docs/MUSIC-FORK.md) (in Russian).
+
 <p align="center">
   <a href="https://learnharness.ai">Download</a> ·
   <a href="#how-it-works">How it works</a> ·
