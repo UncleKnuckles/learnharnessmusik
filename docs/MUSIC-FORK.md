@@ -111,8 +111,12 @@ claude mcp add learnharness -- node C:\path\to\learnharnessmusik\cli\learnharnes
 
 LearnHarness при этом должен быть запущен.
 
-## Сборка для Windows
+## Установка и обновления
 
-GitHub → Actions → **Windows installer (music fork)** → *Run workflow*. Когда сборка закончится, установщик `LearnHarness-Setup-*.exe` появится в артефактах запуска. Обновления форка берутся из релизов `UncleKnuckles/learnharnessmusik`, поэтому релизы оригинала его не перезапишут.
+Установщик лежит на странице **Releases** репозитория: https://github.com/UncleKnuckles/learnharnessmusik/releases/latest. Скачайте `LearnHarness-<версия>-x64-setup.exe` из раздела Assets и запустите.
+
+Новый релиз собирается сам после каждого слияния в `main`, если в `package.json` поднята версия. Установленное приложение само скачивает новые версии и предлагает перезапуск (переключатель Settings → General → Automatic updates, там же кнопка Check for updates). Обновления форка берутся только из релизов `UncleKnuckles/learnharnessmusik`, поэтому релизы оригинала его не перезапишут.
+
+Пересобрать текущую версию вручную: GitHub → Actions → **Windows installer (music fork)** → *Run workflow*. Файлы установщика в релизе этой версии заменятся.
 
 Данные (граф, сессии, ключи) лежат в `%APPDATA%\LearnHarness` и не зависят от версии кода, так что после установки форка всё сохраняется.
