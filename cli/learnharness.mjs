@@ -17,6 +17,8 @@
  *   learnharness import <file|dir…>     extract .md/.txt/.pdf, images and audio into the graph
  *   learnharness ask [--model M] [--effort E] <question…>
  *                                       ask Claude (default: Fable 5.2) with your graph as context
+ *   learnharness review [--all]         ideas due for spaced repetition (FSRS-6), plus today's new cards
+ *   learnharness grade <id> <1-4>       record a flashcard grade: 1 Again, 2 Hard, 3 Good, 4 Easy
  *   learnharness doctor                 check the Claude Code sign-in LearnHarness relies on
  *   learnharness mcp                    run as an MCP server over stdio
  *
@@ -30,7 +32,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const FABLE = "claude-fable-5-2";
-const IMPORT_EXT = /\.(?:md|markdown|txt|pdf|png|jpe?g|webp|mp3|wav|m4a|aac|ogg|oga|opus|flac|webm)$/i;
+const IMPORT_EXT = /\.(?:md|markdown|txt|rst|org|adoc|tex|pdf|png|jpe?g|webp|mp3|wav|m4a|aac|ogg|oga|opus|flac|webm)$/i;
 const MAX_REQUEST_BYTES = 2047 * 1024 * 1024; // server cap: 2 GiB per request
 
 // ─── connection ──────────────────────────────────────────────────────────
@@ -279,6 +281,37 @@ export async function doctor() {
 	return lines.join("\n");
 }
 
+// ─── spaced repetition ───────────────────────────────────────────────────
+
+const DAY_MS = 86_400_000;
+const GRADE_NAMES = { 1: "Again", 2: "Hard", 3: "Good", 4: "Easy" };
+
+/** "overdue 3d" / "due today" / "in 5d", like the Review page. */
+export function formatDue(dueAt, now) {
+	const diff = dueAt - now;
+	if (diff <= 0) {
+		const days = Math.floor(-diff / DAY_MS);
+		return days === 0 ? "due today" : `overdue ${days}d`;
+	}
+	return `in ${Math.ceil(diff / DAY_MS)}d`;
+}
+
+export function reviewSummary(payload, { all = false } = {}) {
+	const pick = (item) => ({ id: item.id, name: item.name, statement: item.statement, due: formatDue(item.dueAt, payload.now), ...(item.verifying ? { recheck: true } : {}) });
+	return {
+		due: (payload.due ?? []).map(pick),
+		newCards: (payload.fresh ?? []).map(({ id, name, statement }) => ({ id, name, statement })),
+		...(all ? { upcoming: (payload.upcoming ?? []).map(pick) } : { upcomingCount: (payload.upcoming ?? []).length }),
+	};
+}
+
+async function gradeCard(id, grade, session) {
+	const value = Number(grade);
+	if (![1, 2, 3, 4].includes(value)) throw new Error("Grade must be 1 (Again), 2 (Hard), 3 (Good) or 4 (Easy).");
+	await api("/api/review/cards", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: id, grade: value, ...(session ? { session } : {}) }) });
+	return `Recorded ${GRADE_NAMES[value]} for ${id}.`;
+}
+
 // ─── MCP server ──────────────────────────────────────────────────────────
 
 async function runMcp() {
@@ -287,7 +320,7 @@ async function runMcp() {
 		import("@modelcontextprotocol/sdk/server/stdio.js"),
 		import("zod"),
 	]);
-	const server = new McpServer({ name: "learnharness", version: "0.5.0-music" });
+	const server = new McpServer({ name: "learnharness", version: "0.8.2" });
 	const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 	const guard = (fn) => async (args) => {
 		try { return text(await fn(args ?? {})); }
@@ -324,6 +357,19 @@ async function runMcp() {
 		inputSchema: { paths: z.array(z.string()).min(1) },
 	}, guard(async ({ paths }) => importFiles(paths)));
 
+	server.registerTool("review_due", {
+		title: "Ideas due for review",
+		description: "Spaced repetition (FSRS-6): the learner's ideas whose recall is due now, and today's new flashcards. Use it to remind the learner what to review or to quiz them: show an idea's name, let them recall it, then grade with grade_card.",
+		inputSchema: { all: z.boolean().optional().describe("Also list upcoming (not yet due) ideas") },
+	}, guard(async ({ all }) => reviewSummary(await api("/api/review"), { all })));
+
+	const mcpSitting = `cards-mcp-${Date.now()}`;
+	server.registerTool("grade_card", {
+		title: "Grade a flashcard",
+		description: "Record how well the learner recalled one idea, which reschedules it: 1 Again (forgot), 2 Hard, 3 Good, 4 Easy. Grade honestly from the learner's own answer.",
+		inputSchema: { id: z.string().describe("Idea id from review_due"), grade: z.number().int().min(1).max(4) },
+	}, guard(async ({ id, grade }) => gradeCard(id, grade, mcpSitting)));
+
 	server.registerTool("list_models", {
 		title: "List models",
 		description: "Models LearnHarness can use (Claude Code CLI models incl. Claude Fable 5.2, and API-key providers), plus the configured model slots.",
@@ -358,6 +404,8 @@ const USAGE = `  learnharness status                 app, graph and Claude Code 
   learnharness import <file|dir…>     extract .md/.txt/.pdf, images and audio into the graph
   learnharness ask [--model M] [--effort E] <question…>
                                       ask Claude (default Fable 5.2) with your graph as context
+  learnharness review [--all]         ideas due for spaced repetition, plus today's new cards
+  learnharness grade <id> <1-4>       record a flashcard grade: 1 Again, 2 Hard, 3 Good, 4 Easy
   learnharness doctor                 check the Claude Code sign-in LearnHarness needs
   learnharness mcp                    run as an MCP server over stdio
 
@@ -436,6 +484,23 @@ async function main(argv) {
 			await askClaude(question, { model, effort, stream: (chunk) => process.stdout.write(chunk) });
 			process.stdout.write("\n");
 			return;
+		}
+		case "review": {
+			const summary = reviewSummary(await api("/api/review"), { all: rest.includes("--all") });
+			if (json) return console.log(JSON.stringify(summary, null, 2));
+			console.log(summary.due.length ? `Due now (${summary.due.length}):` : "Nothing is due.");
+			for (const item of summary.due) console.log(`  ${item.id}  ${item.name}  [${item.due}${item.recheck ? ", re-check" : ""}]`);
+			if (summary.newCards.length) {
+				console.log(`\nNew cards today (${summary.newCards.length}):`);
+				for (const item of summary.newCards) console.log(`  ${item.id}  ${item.name}`);
+			}
+			if (summary.upcoming) for (const item of summary.upcoming) console.log(`  later: ${item.id}  ${item.name}  [${item.due}]`);
+			else if (summary.upcomingCount) console.log(`\n${summary.upcomingCount} more come up later (--all lists them).`);
+			return;
+		}
+		case "grade": {
+			if (rest.length < 2) throw new Error("Usage: learnharness grade <id> <1-4>");
+			return console.log(await gradeCard(rest[0], rest[1]));
 		}
 		case "doctor":
 			return console.log(await doctor());
