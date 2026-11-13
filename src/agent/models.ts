@@ -3,6 +3,9 @@ import {
 	createModels,
 	getSupportedThinkingLevels,
 	type Api,
+	type Credential,
+	type CredentialInfo,
+	type CredentialStore,
 	type CacheRetention,
 	type Model,
 	type Models,
@@ -12,6 +15,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { lazyApi, lazyStream } from "@earendil-works/pi-ai/api/lazy";
+import { antigravityProvider } from "./providers/antigravity/index.ts";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type ModelRole } from "../../config.ts";
 import { DEFAULT_THINKING_ORDER } from "../core/settings.ts";
@@ -73,6 +77,42 @@ export function configureProviderSource(source: ProviderSource): void {
 	providerSource = source;
 }
 
+/** Subscription sign-in tokens (owner, 2026-10-21): pi-ai reads and
+ *  refreshes OAuth credentials through this store. The agent layer may not
+ *  import the store layer, so it holds a swappable PROXY — the composition
+ *  root (src/server/stores.ts) binds the file-backed backend; until then
+ *  (tests) a throwaway in-memory map stands in. */
+let credentialBackend: CredentialStore = memoryCredentials();
+
+function memoryCredentials(): CredentialStore {
+	const map = new Map<string, Credential>();
+	return {
+		read: async (id) => map.get(id),
+		list: async (): Promise<readonly CredentialInfo[]> => [...map].map(([providerId, c]) => ({ providerId, type: c.type })),
+		modify: async (id, fn) => {
+			const next = await fn(map.get(id));
+			if (next === undefined) return map.get(id);
+			map.set(id, next);
+			return next;
+		},
+		delete: async (id) => {
+			map.delete(id);
+		},
+	};
+}
+
+const credentialProxy: CredentialStore = {
+	read: (id, o) => credentialBackend.read(id, o),
+	list: (o) => credentialBackend.list(o),
+	modify: (id, fn, o) => credentialBackend.modify(id, fn, o),
+	delete: (id, o) => credentialBackend.delete(id, o),
+};
+
+/** Composition root hook: point pi-ai's OAuth credentials at `backend`. */
+export function bindCredentialStore(backend: CredentialStore): void {
+	credentialBackend = backend;
+}
+
 /** The process-wide pi-ai Models collection — EVERY builtin provider's
  *  catalog (model slots wave, 2026-09-20): engines and the picker resolve
  *  against all of pi-ai's per-provider catalogs, so a settings slot can pin
@@ -83,7 +123,7 @@ export function configureProviderSource(source: ProviderSource): void {
  *  keyPresent. */
 export function piModels() {
 	if (!collection) {
-		collection = createModels({ identity: APP_IDENTITY });
+		collection = createModels({ credentials: credentialProxy, identity: APP_IDENTITY });
 		for (const provider of builtinProviders()) {
 			// Keep the native Bedrock implementation reachable by standalone tracing.
 			// Pi's default Node-only loader hides this import from bundlers. Only
@@ -92,6 +132,7 @@ export function piModels() {
 				? { ...provider, ...lazyApi(() => import("@earendil-works/pi-ai/api/bedrock-converse-stream")) }
 				: provider.id === "anthropic" ? withFable52(provider) : provider);
 		}
+		collection.setProvider(antigravityProvider());
 		collection.setProvider(createClaudeCodeProvider(streamClaudeCode));
 	}
 	providerSource?.sync(collection);

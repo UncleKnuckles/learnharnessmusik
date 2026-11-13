@@ -27,6 +27,7 @@ function item(overrides: Partial<ChatListItem>): ChatListItem {
 		messageCount: 4,
 		phase: "probe",
 		pendingQuestion: false,
+		progress: null,
 		pendingProblem: false,
 		busy: false,
 		compacting: false,
@@ -34,8 +35,8 @@ function item(overrides: Partial<ChatListItem>): ChatListItem {
 	};
 }
 
-function render(chat: ChatListItem, active = false) {
-	return renderToStaticMarkup(<SessionRow chat={chat} active={active} onOpen={() => {}} />);
+function render(chat: ChatListItem, active = false, archivedLabel = false) {
+	return renderToStaticMarkup(<SessionRow chat={chat} active={active} onOpen={() => {}} archivedLabel={archivedLabel} />);
 }
 
 describe("SessionRow", () => {
@@ -163,5 +164,64 @@ describe("SessionRow practice badge (practice sessions, 2026-10-04)", () => {
 	it("a practice row with a posed problem says the problem is waiting", () => {
 		const html = render(item({ kind: "practice", pendingProblem: true }));
 		assert.match(html, /Problem waiting ·/);
+	});
+});
+
+describe("SessionRow progress ring", () => {
+	it("a session with no plan shows no ring", () => {
+		assert.doesNotMatch(render(item({ progress: null })), /progress-ring/);
+	});
+
+	it("shows partial progress as a labelled ring, not complete", () => {
+		const html = render(item({ progress: { done: 3, total: 12 } }));
+		assert.match(html, /data-testid="progress-ring"/);
+		assert.match(html, /aria-label="3 of 12 steps learned"/);
+		assert.match(html, /data-complete="false"/);
+		assert.match(html, /stroke-dasharray="25 100"/);
+	});
+
+	it("an empty ring still shows once a plan exists", () => {
+		const html = render(item({ progress: { done: 0, total: 5 } }));
+		assert.match(html, /aria-label="0 of 5 steps learned"/);
+		assert.match(html, /stroke-dasharray="0 100"/);
+	});
+
+	it("a finished plan becomes a ring with a check", () => {
+		const html = render(item({ progress: { done: 7, total: 7 } }));
+		assert.match(html, /aria-label="All 7 steps learned"/);
+		assert.match(html, /data-complete="true"/);
+		assert.match(html, /data-testid="progress-check"/);
+	});
+
+	it("a partial ring has no check", () => {
+		assert.doesNotMatch(render(item({ progress: { done: 6, total: 7 } })), /progress-check/);
+	});
+
+	it("never overflows if the plan shrank under the count", () => {
+		const html = render(item({ progress: { done: 9, total: 7 } }));
+		assert.match(html, /data-complete="true"/);
+	});
+
+	it("rides alongside the practice marker without replacing it", () => {
+		const html = render(item({ kind: "practice", progress: null }));
+		assert.match(html, /Practice session/);
+		assert.doesNotMatch(html, /progress-ring/);
+	});
+});
+
+describe("SessionRow — pin / archive", () => {
+	it("a pinned session carries the pin icon; a plain one does not", () => {
+		assert.ok(render(item({ pinnedAt: "2026-02-01T00:00:00.000Z" })).includes('aria-label="Pinned"'));
+		assert.ok(!render(item({})).includes('aria-label="Pinned"'));
+	});
+
+	it("an archived session is labelled only when the row asks for it (search results)", () => {
+		const archived = item({ archivedAt: "2026-02-01T00:00:00.000Z" });
+		assert.ok(render(archived, false, true).includes("Archived · "));
+		assert.ok(!render(archived).includes("Archived"), "inside the Archived group the label would be redundant");
+	});
+
+	it("every row is a walkable session row (the keyboard scroll targets it)", () => {
+		assert.ok(render(item({})).includes("data-session-row"));
 	});
 });

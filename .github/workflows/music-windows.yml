@@ -1,13 +1,27 @@
-# Music-study fork: build the Windows installer on demand.
-# Actions → "Windows installer (music fork)" → Run workflow. The installer
-# (LearnHarness-Setup-*.exe) is attached to the run as an artifact.
+# Music-study fork: build the Windows installer and publish it as a GitHub
+# Release, so it can be downloaded from the repo's Releases page and the
+# installed app updates itself (electron-updater reads latest.yml from the
+# newest release of UncleKnuckles/learnharnessmusik).
+#
+# - Every push to main (a merged PR) publishes release v<package.json version>
+#   if that release does not exist yet. Bump "version" in package.json to ship
+#   a new release; a merge that keeps the version publishes nothing new.
+# - Actions → "Windows installer (music fork)" → Run workflow builds the
+#   current main and replaces the installer files of that version's release
+#   (or creates it).
 name: Windows installer (music fork)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: music-windows-release
+  cancel-in-progress: false
 
 jobs:
   windows:
@@ -16,25 +30,63 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+      - name: Decide whether to publish
+        id: plan
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; else echo "build=false" >> "$GITHUB_OUTPUT"; fi
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Release already published
+        if: steps.plan.outputs.build != 'true'
+        run: echo "v${{ steps.plan.outputs.version }} is already released. Bump the version in package.json to publish a new one."
       - uses: actions/setup-node@v7
+        if: steps.plan.outputs.build == 'true'
         with:
           node-version: "26"
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: node scripts/smoke-provider-runtime.mjs
-      - run: node scripts/build-server.mjs
-      - run: node scripts/smoke-server.mjs --electron
-      - run: npx electron-builder --win --x64 --publish never
-      - name: Save the installer
-        uses: actions/upload-artifact@v7
-        with:
-          name: learnharness-music-windows-x64
-          retention-days: 14
-          if-no-files-found: error
-          path: |
-            dist/*.exe
-            dist/*.blockmap
-            dist/latest*.yml
+      - if: steps.plan.outputs.build == 'true'
+        run: npm ci
+      - if: steps.plan.outputs.build == 'true'
+        run: npm run plugins:setup
+      - if: steps.plan.outputs.build == 'true'
+        run: npm run build
+      - if: steps.plan.outputs.build == 'true'
+        run: node scripts/smoke-provider-runtime.mjs
+      - if: steps.plan.outputs.build == 'true'
+        run: node scripts/build-server.mjs
+      - if: steps.plan.outputs.build == 'true'
+        run: node scripts/smoke-server.mjs --electron
+      - if: steps.plan.outputs.build == 'true'
+        run: npx electron-builder --win --x64 --publish never
+      - name: Publish the release
+        if: steps.plan.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          EXISTS: ${{ steps.plan.outputs.exists }}
+        run: |
+          shopt -s nullglob
+          files=(dist/*-setup.exe dist/*-setup.exe.blockmap dist/latest.yml)
+          [ ${#files[@]} -ge 3 ] || { echo "Installer files missing: ${files[*]}"; ls dist; exit 1; }
+          if [ "$EXISTS" = "true" ]; then
+            gh release upload "v$VERSION" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          **Установка на Windows:** скачайте \`LearnHarness-$VERSION-x64-setup.exe\` ниже (раздел Assets) и запустите. Граф и настройки сохраняются.
+
+          Установленное приложение само скачивает следующие версии и предлагает перезапуск.
+
+          Что есть в форке: [docs/MUSIC-FORK.md](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/MUSIC-FORK.md).
+          NOTES
+            gh release create "v$VERSION" "${files[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "LearnHarness Music $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          fi

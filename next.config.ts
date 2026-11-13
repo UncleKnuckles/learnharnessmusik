@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { NextConfig } from "next";
+import { MATERIAL_MAX_BYTES } from "./src/core/materials.ts";
 import { MAX_IMPORT_BODY_BYTES } from "./lib/notes-import-limits.ts";
 
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string; homepage: string };
@@ -7,10 +8,18 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 const nextConfig: NextConfig = {
 	// Public build metadata only; no new runtime Electron version API.
 	env: { LH_VERSION: pkg.version, LH_HOMEPAGE: pkg.homepage },
-	// Leave multipart headroom above the file allowance (2 GiB in this fork). This is a
-	// proxy buffer, not a rejection gate: the import route also bounds reads,
-	// validates actual file bytes and handles incomplete multipart bodies.
-	experimental: { proxyClientMaxBodySize: MAX_IMPORT_BODY_BYTES },
+	// UPLOADS (2026-10-25): proxy.ts guards every /api route, and with a
+	// proxy present Next buffers only the first proxyClientMaxBodySize
+	// bytes of a request body (default 10 MB) — a 13.9 MB PDF arrived
+	// truncated and formData() failed. One material per request (the
+	// client's uploadFiles), so the limit is the per-file ceiling plus
+	// headroom for the multipart framing. Upstream's notes import needs
+	// MAX_IMPORT_BODY_BYTES (2 GiB file + framing in the music fork); the material ceiling is
+	// larger, so the max covers both. This is a proxy buffer, not a rejection
+	// gate: the routes bound reads and validate the actual bytes themselves.
+	experimental: {
+		proxyClientMaxBodySize: Math.max(MATERIAL_MAX_BYTES + 1024 * 1024, MAX_IMPORT_BODY_BYTES),
+	},
 	// Desktop target (Electron wrapper, 2026-09-17): standalone output = a
 	// self-contained .next/standalone/server.js the Electron shell spawns
 	// on 127.0.0.1. Harmless for plain web deploys (extra build output).
@@ -85,6 +94,9 @@ const nextConfig: NextConfig = {
 			"node_modules/@napi-rs/canvas-*/**/*",
 			// Pi-compatible image resizing runs in an unbundled worker. Photon
 			// loads its colocated WASM through Node, also in packaged Electron.
+			// Side questions (2026-11-02): the side model's base prompt is read
+			// from disk per ask — a directory no agent-composition read names.
+			"src/agent/prompts/side-chat/*.md",
 			"src/agent/image-processing/*.mjs",
 			"src/agent/image-processing/LICENSE",
 			"node_modules/@silvia-odwyer/photon-node/**/*",
@@ -92,10 +104,13 @@ const nextConfig: NextConfig = {
 			// per-platform-binary story as the canvas above (one per build).
 			"node_modules/@resvg/resvg-js-*/**/*",
 			"node_modules/@earendil-works/pi-ai/dist/providers/data/**/*",
-			// Public native OAuth factories load these flows through variable imports.
-			// Electron main uses the same standalone SDK; the offline runtime gate
-			// evaluates their real toAuth paths without login or provider requests.
-			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,github-copilot,xai,device-code}.js",
+			// Subscription sign-in (2026-10-21): pi-ai loads each OAuth flow through
+			// a variable specifier (auth/oauth/load.js) so bundlers cannot follow
+			// it — the tracer misses every flow module, and the packaged app's
+			// Sign in dies with "Cannot find module" for oauth/anthropic.js.
+			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/**/*",
+			// An include does not follow requires: the two utils the flows import.
+			"node_modules/@earendil-works/pi-ai/dist/utils/oauth-page.js",
 			"node_modules/@earendil-works/pi-ai/dist/utils/sleep.js",
 			"node_modules/@earendil-works/pi-agent-core/dist/**/*.json",
 			// Next 16.3.2 native Turbopack applies unanchored excludes while

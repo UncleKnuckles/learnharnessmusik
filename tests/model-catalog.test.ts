@@ -339,6 +339,18 @@ describe("pi thinking truth (pinned against pi-ai upgrades)", () => {
 		assert.throws(() => piEngineFor("prober"), /no configured model for role "prober"/);
 	});
 });
+describe("sign-in-only providers (Antigravity)", () => {
+	it("is a catalog provider without an API key, gated on the sign-in", () => {
+		const row = catalogProviders().find((p) => p.id === "antigravity");
+		assert.ok(row, "antigravity row exists even though it has no key");
+		assert.equal(row!.envVar, "");
+		// Not signed in on the test machine: its models stay out of the picker.
+		assert.equal(row!.keyPresent, false);
+		assert.ok(!modelCatalog().models.some((m) => m.provider === "antigravity"));
+		assert.equal(providerKeyPresent("antigravity"), false);
+	});
+});
+
 /** Runs fn with PATH and HOME pointed at a temp dir, so the CLI lookup only
  *  finds a claude binary when installed is true. */
 function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true): void {
