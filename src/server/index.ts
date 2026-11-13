@@ -68,6 +68,8 @@ export { pluginQuestionAvailabilityOf, reconcilePluginQuestionCompatibility, pre
 export { claudeCodeInstallationResponse } from "./claude-code.ts";
 export { alreadyImported, contentHash, detectAudio, detectImage, MediaImportError, recordImported, transcribeAudio, transcribeImage } from "./media-import.ts";
 export { handyStatus, runHandy, HandyNotFoundError, type HandyAction } from "./handy.ts";
+export { GeminiSttError, geminiConfigured, transcribeWithGemini } from "./gemini-stt.ts";
+export { nodeTranslationsView, type NodeTranslation, type TranslationsView } from "./graph-translations.ts";
 // The custom endpoint module (registers into piModels() + probes for models).
 // No import side effects; the boot sync lives in stores.ts.
 export * from "./custom-provider.ts";

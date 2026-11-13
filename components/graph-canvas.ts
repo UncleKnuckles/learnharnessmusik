@@ -876,6 +876,32 @@ export class GraphCanvasRenderer {
 		if (changed) this.markDirty();
 	}
 
+	/** Label-only channel for node names (music-study fork: Russian names
+	 *  arrive after the graph is drawn). Rewraps just the changed labels;
+	 *  positions, the sim and the geometry are never touched. */
+	setNodeLabels(labels: ReadonlyMap<string, string>): void {
+		const data = this.data;
+		if (!data) return;
+		const changed: CanvasNode[] = [];
+		for (const n of data.nodes) {
+			const next = labels.get(n.id);
+			if (next === undefined || next === n.label) continue;
+			n.label = next;
+			changed.push(n);
+		}
+		if (changed.length === 0) return;
+		const settings = this.settings;
+		if (settings) {
+			const ctx = this.ctx;
+			const prevFont = ctx.font;
+			ctx.font = this.worldLabelFont;
+			const maxW = LABEL_MAX_WIDTH * (settings.labelSize / LABEL_SIZE);
+			for (const n of changed) if (this.labelLines.has(n.id)) this.labelLines.set(n.id, wrapLabel(ctx, n.label, maxW));
+			ctx.font = prevFont;
+		}
+		this.markDirty();
+	}
+
 	setVisible(visible: ReadonlySet<string> | null): void {
 		this.visible = visible;
 		this.geoVersion++; // member visibility changes hulls + paths
@@ -931,6 +957,8 @@ export class GraphCanvasRenderer {
 	/** Wheel: accumulate the zoom target; the camera GLIDES toward it in the
 	 *  tick loop (cursor-anchored). Sensitivity formula is d3-zoom's own. */
 	private onWheel = (e: WheelEvent) => {
+		// Ctrl+wheel scales the whole window (music-study fork, electron/main.cjs).
+		if (e.ctrlKey) return;
 		e.preventDefault();
 		const delta = -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002);
 		const { x, y } = this.eventPos(e);

@@ -44,7 +44,7 @@ import { isInteractionScopeEligible } from "@/components/plugin-input-focus";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { DictationLanguageSetting } from "@/components/dictation-language";
-import { DictationEngineSetting } from "@/components/dictation-engine";
+import { DictationEngineSetting, DictationHistory } from "@/components/dictation-engine";
 
 /** One pi-ai provider with plain API-key auth (the Platform seam —
  *  derived from pi-ai's own env-key table; no drift possible). */
@@ -617,8 +617,14 @@ export function KeysSection({
 							target="_blank"
 							rel="noreferrer"
 							className="underline underline-offset-2 hover:text-foreground"
-						>Handy</a> for free local dictation without a key: the Dictate button then starts and stops Handy, and Handy types into the composer.
+						>Handy</a> for free local dictation without a key: the Dictate button then starts and stops Handy, and Handy types into the composer. Or pick Gemini and add a free <a
+							href="https://aistudio.google.com/apikey"
+							target="_blank"
+							rel="noreferrer"
+							className="underline underline-offset-2 hover:text-foreground"
+						>Google key</a> under Model API keys: LearnHarness records, and Gemini transcribes when you press Stop. On Google&apos;s free tier, Google may use the audio to improve its products.
 					</p>
+					<DictationHistory />
 				</>}
 			</SettingsGroup>)}
 

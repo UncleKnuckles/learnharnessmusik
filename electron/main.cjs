@@ -432,7 +432,19 @@ function createWindow(url) {
 	// claimed keys never reach before-input-event, so exactly one of the
 	// two applies any given zoom keypress.
 	win.webContents.on("did-finish-load", () => {
+		// The saved scale (music-study fork): the server port, and so the
+		// origin Chromium keys zoom by, changes every launch.
+		const saved = readSavedZoom();
+		if (saved !== null && Math.abs(saved - win.webContents.getZoomFactor()) > 0.001) win.webContents.setZoomFactor(saved);
 		win.webContents.send("lh:zoom", win.webContents.getZoomFactor());
+	});
+	// Ctrl + mouse wheel scales the whole window, like a browser's page zoom.
+	let lastWheelZoom = 0;
+	win.webContents.on("zoom-changed", (_event, direction) => {
+		const now = Date.now();
+		if (now - lastWheelZoom < 60) return; // one step per wheel notch, even on fast wheels
+		lastWheelZoom = now;
+		zoomStep(win, direction === "in" ? +1 : -1);
 	});
 	win.webContents.on("before-input-event", (event, input) => {
 		if (input.type !== "keyDown" || !(input.meta || input.control)) return;
@@ -462,7 +474,28 @@ function createWindow(url) {
  * Vertical note: at large factors the taller bands' content centers
  * drift below the fixed lights — accepted (the alternative, moving the
  * lights, is impossible without rebuilding the window). */
-const ZOOM_LADDER = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const ZOOM_LADDER = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const ZOOM_MIN = ZOOM_LADDER[0];
+const ZOOM_MAX = ZOOM_LADDER[ZOOM_LADDER.length - 1];
+const ZOOM_FILE = () => path.join(app.getPath("userData"), "zoom.json");
+
+/** The window scale saved by the last change (music-study fork), or null. */
+function readSavedZoom() {
+	try {
+		const factor = JSON.parse(fs.readFileSync(ZOOM_FILE(), "utf8")).factor;
+		return typeof factor === "number" && factor >= ZOOM_MIN && factor <= ZOOM_MAX ? factor : null;
+	} catch {
+		return null;
+	}
+}
+
+function saveZoom(factor) {
+	try {
+		fs.writeFileSync(ZOOM_FILE(), JSON.stringify({ factor }));
+	} catch {
+		/* the scale just resets next launch */
+	}
+}
 
 /* ── Auto-update (Wave C, owner 2026-10-10: silent download + restart ─────
  * banner; checks at startup + every 24h) ─────────────────────────────────
@@ -628,9 +661,10 @@ function zoomStep(win, dir) {
 }
 
 function applyZoom(win, factor) {
-	factor = Math.min(2, Math.max(0.75, factor)); // ladder clamps; ⌘0 = 1
+	factor = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, factor)); // ladder clamps; ⌘0 = 1
 	win.webContents.setZoomFactor(factor);
 	win.webContents.send("lh:zoom", factor);
+	saveZoom(factor);
 }
 
 /** macOS needs an application menu with the Edit roles — without one,

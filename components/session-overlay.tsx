@@ -169,6 +169,7 @@ export function MermaidOverlay({
 		const el = viewportRef.current;
 		if (!el) return;
 		const onWheel = (e: WheelEvent) => {
+			if (e.ctrlKey) return; // Ctrl+wheel scales the whole window
 			e.preventDefault();
 			const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
 			const factor = Math.exp(-dy * 0.0015);

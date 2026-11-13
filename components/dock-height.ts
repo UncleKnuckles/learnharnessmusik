@@ -154,7 +154,7 @@ export function useDockHeight({
  * scroll container (including the short-window viewport), then forward only
  * at its edge. overflow:hidden/visible boxes cannot consume the wheel. */
 export function forwardDockWheel(event: WheelEvent, root: HTMLElement, transcript: HTMLElement) {
-	if (event.deltaY === 0) return;
+	if (event.deltaY === 0 || event.ctrlKey) return; // Ctrl+wheel scales the whole window
 	for (let n = event.target as HTMLElement | null; n && n !== root; n = n.parentElement) {
 		if (!(n instanceof HTMLElement) || !/^(auto|scroll)$/.test(getComputedStyle(n).overflowY)) continue;
 		if (n.scrollHeight - n.clientHeight < 2) continue;
