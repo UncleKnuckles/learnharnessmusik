@@ -191,10 +191,18 @@ export function createNodeTranslator(deps: Deps) {
 	return { view, kick, idle: () => running ?? Promise.resolve() };
 }
 
+/** The ledger holds one line per encounter; the FIRST line of an id defines
+ *  its name and statement (later lines only add phrasings — core/graph.ts). */
+export function firstLinePerId(lines: readonly GraphNode[]): GraphNode[] {
+	const seen = new Map<string, GraphNode>();
+	for (const line of lines) if (!seen.has(line.id)) seen.set(line.id, line);
+	return [...seen.values()];
+}
+
 let shared: ReturnType<typeof createNodeTranslator> | null = null;
 
 /** GET /api/graph/translations: the current Russian entries, and a background run if needed. */
 export function nodeTranslationsView(): TranslationsView {
-	shared ??= createNodeTranslator({ readNodes: () => stores.graphStore.readNodes(), translate: modelTranslateBatch });
+	shared ??= createNodeTranslator({ readNodes: () => firstLinePerId(stores.graphStore.readNodes()), translate: modelTranslateBatch });
 	return shared.view();
 }

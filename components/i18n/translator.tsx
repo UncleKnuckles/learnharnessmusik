@@ -57,7 +57,10 @@ const SKIP_SELECTOR = [
 	"[contenteditable='true']", "[contenteditable='']", "[contenteditable='plaintext-only']", ".katex", "svg text",
 	"[data-file-path-input]",
 ].join(",");
-const ATTRIBUTES = ["placeholder", "title"] as const;
+const ATTRIBUTES = ["placeholder", "title", "data-placeholder", "aria-placeholder"] as const;
+/** Placeholders are never the learner's text, so they translate even on
+ *  editable fields (the composer is a contenteditable with data-placeholder). */
+const PLACEHOLDERS = ["placeholder", "data-placeholder", "aria-placeholder"] as const;
 
 function skipped(el: Element | null): boolean {
 	return !el || el.closest(SKIP_SELECTOR) !== null;
@@ -82,8 +85,8 @@ function translateTextNode(node: Text): void {
 	node.nodeValue = next;
 }
 
-function translateAttributes(el: Element): void {
-	for (const name of ATTRIBUTES) {
+function translateAttributes(el: Element, names: readonly string[] = ATTRIBUTES): void {
+	for (const name of names) {
 		const value = el.getAttribute(name);
 		if (!value) continue;
 		const next = translateWithSpacing(value);
@@ -95,11 +98,15 @@ function translateTree(root: Node): void {
 	if (root.nodeType === Node.TEXT_NODE) { translateTextNode(root as Text); return; }
 	if (!(root instanceof Element) && !(root instanceof DocumentFragment)) return;
 	if (root instanceof Element) {
-		if (root.matches(SKIP_SELECTOR)) return;
+		if (root.matches(SKIP_SELECTOR)) { translateAttributes(root, PLACEHOLDERS); return; }
 		translateAttributes(root);
 	}
 	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-		acceptNode: (node) => node instanceof Element && node.matches(SKIP_SELECTOR) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+		acceptNode: (node) => {
+			if (!(node instanceof Element) || !node.matches(SKIP_SELECTOR)) return NodeFilter.FILTER_ACCEPT;
+			translateAttributes(node, PLACEHOLDERS);
+			return NodeFilter.FILTER_REJECT;
+		},
 	});
 	for (let node = walker.nextNode(); node; node = walker.nextNode()) {
 		if (node.nodeType === Node.TEXT_NODE) translateTextNode(node as Text);
@@ -113,7 +120,10 @@ export function startTranslating(target: Element = document.body): () => void {
 	const observer = new MutationObserver((records) => {
 		for (const record of records) {
 			if (record.type === "characterData") translateTextNode(record.target as Text);
-			else if (record.type === "attributes") translateAttributes(record.target as Element);
+			else if (record.type === "attributes") {
+				const el = record.target as Element;
+				translateAttributes(el, el.matches(SKIP_SELECTOR) ? PLACEHOLDERS : ATTRIBUTES);
+			}
 			else for (const node of record.addedNodes) translateTree(node);
 		}
 	});

@@ -683,6 +683,9 @@ export const RU: Record<string, string> = {
 	"Deepgram API key": "API-ключ Deepgram",
 	"with the Member role or higher, then add it above. Or install": "с ролью Member или выше и добавьте его выше. Или установите",
 	"Google key": "ключ Google",
+	"not set": "не задан",
+	"for free local dictation without a key: the Dictate button then starts and stops Handy, and Handy types into the composer. Or pick Gemini and add a free": "для бесплатной локальной диктовки без ключа: кнопка «Диктовать» запускает и останавливает Handy, а Handy печатает в поле ввода. Или выберите Gemini и добавьте бесплатный",
+	"under Model API keys: LearnHarness records, and Gemini transcribes when you press Stop. On Google's free tier, Google may use the audio to improve its products.": "в «API-ключах моделей»: LearnHarness записывает голос, а Gemini расшифровывает его, когда вы нажимаете «Стоп». На бесплатном тарифе Google может использовать аудио для улучшения своих продуктов.",
 	"Search engine": "Поисковик",
 	"Setup ↗": "Настроить ↗",
 	"key ↗": "ключ ↗",
@@ -842,6 +845,11 @@ export const RU: Record<string, string> = {
  * translation, or null to leave the text alone.
  */
 export const RU_RULES: ReadonlyArray<[RegExp, (...groups: string[]) => string]> = [
+	// Tooltips: "Label (Ctrl+F)" — translate the label, keep the shortcut.
+	[/^(.+) \(((?:Ctrl|Alt|Shift|Cmd|Mod|Meta|Esc|Enter|Space|Tab|⌘|⌥|⇧|F\d)[^()]*)\)$/, (label, keys) => {
+		const t = translateText(label);
+		return t === null ? `${label} (${keys})` : `${t} (${keys})`;
+	}],
 	[/^(\d+)m ago$/, (n) => `${n} мин назад`],
 	[/^(\d+)h ago$/, (n) => `${n} ч назад`],
 	[/^(\d+)d ago$/, (n) => `${n} дн. назад`],
@@ -872,6 +880,8 @@ export const RU_RULES: ReadonlyArray<[RegExp, (...groups: string[]) => string]> 
 	[/^Save failed \((\d+)\)$/, (c) => `Не удалось сохранить (${c})`],
 	[/^Delete failed \((\d+)\)$/, (c) => `Не удалось удалить (${c})`],
 	[/^Connect failed \((\d+)\)$/, (c) => `Не удалось подключиться (${c})`],
+	[/^open review, nothing due$/, () => "открыть повторение, повторять нечего"],
+	[/^open review, (\d+) due$/, (n) => `открыть повторение, пора повторить: ${n}`],
 	[/^Review (.+)$/, (name) => `Повторить: ${name}`],
 	[/^Settings for (.+)$/, (name) => `Настройки: ${name}`],
 	[/^Enable (.+)$/, (name) => `Включить: ${name}`],

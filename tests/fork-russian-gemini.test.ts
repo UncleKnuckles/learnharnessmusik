@@ -11,7 +11,7 @@ import {
 	GeminiSttError, geminiModels, isSilent, parseWav, responseText, splitWav, transcribeWithGemini, wavFile, wavSeconds,
 } from "../src/server/gemini-stt.ts";
 import {
-	createNodeTranslator, looksRussian, parseTranslationAnswer, pendingNodes, readTranslationFile, sourceHash, type TranslationInput,
+	createNodeTranslator, firstLinePerId, looksRussian, parseTranslationAnswer, pendingNodes, readTranslationFile, sourceHash, type TranslationInput,
 } from "../src/server/graph-translations.ts";
 import { translateText } from "../components/i18n/ru.ts";
 import { translateWithSpacing } from "../components/i18n/translator.tsx";
@@ -147,6 +147,11 @@ describe("Russian node names", () => {
 	it("detects text that is already Russian", () => {
 		assert.equal(looksRussian("Период (Periode)"), true);
 		assert.equal(looksRussian("Bar form (A-A-B)"), false);
+	});
+
+	it("reads a node's first ledger line, as the graph does", () => {
+		const lines = [node("n1", "Satz", "A sentence form."), node("n2", "Periode", "A period."), node("n1", "Sentence", "Another phrasing.")];
+		assert.deepEqual(firstLinePerId(lines).map((n) => `${n.id}:${n.name}`), ["n1:Satz", "n2:Periode"]);
 	});
 
 	it("parses a model answer and drops unknown ids", () => {
