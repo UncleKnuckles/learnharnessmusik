@@ -320,7 +320,7 @@ async function runMcp() {
 		import("@modelcontextprotocol/sdk/server/stdio.js"),
 		import("zod"),
 	]);
-	const server = new McpServer({ name: "learnharness", version: "0.8.2" });
+	const server = new McpServer({ name: "learnharness", version: "0.8.3" });
 	const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 	const guard = (fn) => async (args) => {
 		try { return text(await fn(args ?? {})); }

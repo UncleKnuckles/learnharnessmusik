@@ -10,12 +10,13 @@ import { AppearanceProvider } from "@/components/settings/appearance";
 import UpdateBanner from "@/components/update-banner";
 import MathCopy from "@/components/math-copy";
 import { PluginsProvider } from "@/components/plugins";
+import { UiTranslator } from "@/components/i18n/translator";
 import { readThemeBoot } from "@/src/server";
 
 // Chrome = JetBrains Mono, teaching prose = Source Sans 3, titles = CMU
 // Serif (the bundled lh-cmu @font-face in globals.css — no CDN).
-const ui = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
-const prose = Source_Sans_3({ subsets: ["latin"], variable: "--font-sans3" });
+const ui = JetBrains_Mono({ subsets: ["latin", "cyrillic"], variable: "--font-jetbrains" });
+const prose = Source_Sans_3({ subsets: ["latin", "cyrillic"], variable: "--font-sans3" });
 
 export const metadata: Metadata = {
 	title: "Learning Harness",
@@ -54,6 +55,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 			<UpdateBanner />
 			{/* Copying a selection that spans KaTeX yields TeX ($…$), not MathML soup. */}
 			<MathCopy />
+			{/* Russian interface (music-study fork): translates UI text in place. */}
+			<UiTranslator />
 		</body>
 		</html>
 	);

@@ -8,7 +8,7 @@ import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 import { dispatchFocusedPluginShortcut } from "@/components/plugin-input-focus";
-import { fetchHandyInstalled, getDictationEngine } from "@/components/dictation-engine";
+import { fetchGeminiConfigured, fetchHandyInstalled, getDictationEngine, recordDictation } from "@/components/dictation-engine";
 export { isDictationActive } from "@/components/dictation-state";
 
 /**
@@ -110,7 +110,9 @@ export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
  * (desktop) or .env.local (dev)") — the surface says the short truth
  * instead. Exported for pins; the errored idle button's click recognizes
  * it and deep-links Settings → Keys → the Deepgram row. */
-export const DICTATION_KEYLESS = "Dictation needs a Deepgram key or Handy";
+export const DICTATION_KEYLESS = "Dictation needs a Deepgram or Google key, or Handy";
+/** The Gemini route's keyless 503 (music-study fork). */
+export const DICTATION_GEMINI_KEYLESS = "Gemini dictation needs a Google key";
 export const DICTATION_ACTIVE_ELSEWHERE = "Dictation is active elsewhere";
 
 // Mounted controllers do not claim capture. Only start() acquires the single
@@ -203,7 +205,7 @@ const warmTokens = createWarmMinter(mintFreshToken);
  * Handy (handy.computer) records and transcribes locally and pastes into
  * the focused field. LearnHarness only keeps the composer focused and asks
  * the server to send Handy its --toggle-transcription / --cancel flags. */
-export type DictationEngineInUse = "deepgram" | "handy";
+export type DictationEngineInUse = "deepgram" | "gemini" | "handy";
 
 async function postHandy(action: "toggle" | "cancel"): Promise<void> {
 	const res = await fetch("/api/stt/handy", {
@@ -246,7 +248,8 @@ function waitForPaste(el: HTMLElement | null, before: string | null, timeoutMs =
 	});
 }
 
-/** "auto": Deepgram when its key exists, Handy when it does not (and is installed). */
+/** "auto": Deepgram when its key exists, else Gemini when a Google key
+ *  exists, else Handy when it is installed. */
 async function resolveEngine(): Promise<DictationEngineInUse> {
 	const preference = getDictationEngine();
 	if (preference !== "auto") return preference;
@@ -254,9 +257,60 @@ async function resolveEngine(): Promise<DictationEngineInUse> {
 		await warmTokens.mint();
 		return "deepgram";
 	} catch (e) {
-		if (e instanceof Error && e.message === DICTATION_KEYLESS && await fetchHandyInstalled()) return "handy";
+		if (!(e instanceof Error && e.message === DICTATION_KEYLESS)) return "deepgram";
+		if (await fetchGeminiConfigured()) return "gemini";
+		if (await fetchHandyInstalled()) return "handy";
 		return "deepgram";
 	}
+}
+
+/* ── Gemini engine (music-study fork) ─────────────────────────────────────
+ * The same worklet captures 16 kHz linear16 PCM; the frames are kept in
+ * memory while recording and sent as one WAV file to /api/stt/gemini when
+ * the learner presses Stop. The server asks the Gemini API for a plain
+ * transcript, which flows through the usual deferred-buffer flush. */
+type PcmFrame = ArrayBuffer | ArrayBufferView;
+
+/** Concatenate captured PCM frames into a 16 kHz mono 16-bit WAV file. */
+export function pcmFramesToWav(frames: readonly PcmFrame[], sampleRate = 16000): Uint8Array<ArrayBuffer> {
+	const parts = frames.map((frame) => frame instanceof ArrayBuffer
+		? new Uint8Array(frame)
+		: new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength));
+	const size = parts.reduce((sum, part) => sum + part.byteLength, 0);
+	const out = new Uint8Array(new ArrayBuffer(44 + size));
+	const view = new DataView(out.buffer);
+	const write = (offset: number, text: string) => { for (let i = 0; i < text.length; i++) out[offset + i] = text.charCodeAt(i); };
+	write(0, "RIFF");
+	view.setUint32(4, 36 + size, true);
+	write(8, "WAVE");
+	write(12, "fmt ");
+	view.setUint32(16, 16, true);
+	view.setUint16(20, 1, true); // PCM
+	view.setUint16(22, 1, true); // mono
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, sampleRate * 2, true);
+	view.setUint16(32, 2, true);
+	view.setUint16(34, 16, true);
+	write(36, "data");
+	view.setUint32(40, size, true);
+	let offset = 44;
+	for (const part of parts) { out.set(part, offset); offset += part.byteLength; }
+	return out;
+}
+
+async function transcribeWithGemini(wav: Uint8Array<ArrayBuffer>, language: string, signal: AbortSignal): Promise<string> {
+	const res = await fetch("/api/stt/gemini", {
+		method: "POST",
+		headers: { "Content-Type": "audio/wav", "x-lh-dictation-language": language },
+		body: new Blob([wav], { type: "audio/wav" }),
+		signal,
+	});
+	const data = (await res.json().catch(() => ({}))) as { text?: unknown; error?: unknown };
+	if (!res.ok) {
+		if (res.status === 503) throw new Error(DICTATION_GEMINI_KEYLESS);
+		throw new Error(typeof data.error === "string" ? data.error : `Gemini transcription failed (${res.status})`);
+	}
+	return typeof data.text === "string" ? data.text.trim() : "";
 }
 
 /* Persistent capture graph (mitigation C, owner 2026-09-27): one
@@ -392,6 +446,10 @@ export type Dictation = {
 	 * the keyless click leaves for Settings and the surface must come
 	 * back clean. */
 	clearError: () => void;
+	/** Gemini (music-study fork): the last recording whose transcription
+	 *  failed is kept, so the errored button can send it again. */
+	canRetry?: boolean;
+	retry?: () => void;
 };
 
 /**
@@ -423,6 +481,13 @@ export function useDictation({ append, destination = "primary", disabled = false
 	const [engine, setEngine] = useState<DictationEngineInUse>("deepgram");
 	const engineRef = useRef<DictationEngineInUse>("deepgram");
 	const handyTargetRef = useRef<HTMLElement | null>(null);
+	/** Gemini: PCM captured during the run, the run's language, and the
+	 *  in-flight transcription request (aborted by cancel/unmount). */
+	const geminiPcmRef = useRef<PcmFrame[]>([]);
+	const geminiLanguageRef = useRef<string>("multi");
+	const geminiAbortRef = useRef<AbortController | null>(null);
+	const failedGeminiRef = useRef<{ wav: Uint8Array<ArrayBuffer>; language: string } | null>(null);
+	const [canRetry, setCanRetry] = useState(false);
 	/** Latest RMS from the worklet — the meter samples this (dictate pattern). */
 	const levelRef = useRef(0);
 	/** Fresh fallback for the next start; a live run retains its own target. */
@@ -467,6 +532,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 		if (bufferRef.current.length === 0) return;
 		const text = bufferRef.current.join(" ");
 		bufferRef.current = [];
+		recordDictation(text, engineRef.current);
 		return (destinationRef.current?.append ?? appendRef.current)(text);
 	}, []);
 
@@ -490,6 +556,9 @@ export function useDictation({ append, destination = "primary", disabled = false
 			safetyRef.current = null;
 		}
 		pendingRef.current = [];
+		geminiPcmRef.current = [];
+		geminiAbortRef.current?.abort();
+		geminiAbortRef.current = null;
 		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
 		streamRef.current = null;
 		sourceRef.current?.disconnect();
@@ -530,6 +599,32 @@ export function useDictation({ append, destination = "primary", disabled = false
 			void Promise.resolve(appended).then(() => complete(null), (error: unknown) => complete({ error }));
 		} else complete(failure);
 	}, [flush, owner, setPhase]);
+
+	/** Send one Gemini recording; the transcript flushes like a Deepgram run.
+	 *  A failed recording is kept for retry() instead of being lost. */
+	const runGemini = useCallback((gen: number, wav: Uint8Array<ArrayBuffer>, language: string) => {
+		const controller = new AbortController();
+		geminiAbortRef.current = controller;
+		transcribeWithGemini(wav, language, controller.signal)
+			.then((text) => {
+				if (gen !== genRef.current) return;
+				failedGeminiRef.current = null;
+				setCanRetry(false);
+				if (text) bufferRef.current.push(text);
+				else setError("Gemini heard no speech");
+			})
+			.catch((e: unknown) => {
+				if (gen !== genRef.current || controller.signal.aborted) return;
+				failedGeminiRef.current = { wav, language };
+				setCanRetry(true);
+				setError(e instanceof Error ? e.message : "Gemini transcription failed");
+			})
+			.finally(() => {
+				if (gen !== genRef.current) return;
+				geminiAbortRef.current = null;
+				cleanup(false);
+			});
+	}, [cleanup]);
 
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
 	const openSocket = useCallback(
@@ -614,6 +709,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 		reconnectsRef.current = 0;
 		bufferRef.current = []; // fresh run, fresh buffer (round 2)
 		pendingRef.current = []; // fresh run, fresh queue (mitigation A)
+		failedGeminiRef.current = null; // a new recording replaces a failed one
+		setCanRetry(false);
 		const gen = ++genRef.current;
 		engineRef.current = "deepgram";
 		const chosen = await resolveEngine();
@@ -638,7 +735,10 @@ export function useDictation({ append, destination = "primary", disabled = false
 			setPhase("recording");
 			return;
 		}
-		setEngine("deepgram");
+		const gemini = chosen === "gemini";
+		engineRef.current = chosen;
+		setEngine(chosen);
+		geminiPcmRef.current = [];
 		let language: DictationLanguage;
 		try {
 			language = await getLanguage();
@@ -656,8 +756,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 		// the token runs concurrently with it. 127.0.0.1 is a secure
 		// context, so getUserMedia works without TLS; macOS TCC prompts on
 		// first use.
-		const tokenPromise = warmTokens.mint();
-		tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
+		const tokenPromise = gemini ? null : warmTokens.mint();
+		tokenPromise?.catch(() => {}); // surfaced below; no unhandled rejection
 		const micPromise = navigator.mediaDevices.getUserMedia({
 			audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
 		});
@@ -684,6 +784,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 				const msg = e.data as { type: string; rms?: number; buffer?: ArrayBuffer };
 				if (msg.type === "level") {
 					levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
+				} else if (msg.type === "audio" && gemini) {
+					geminiPcmRef.current.push(msg.buffer!); // sent as one WAV at Stop
 				} else if (msg.type === "audio") {
 					const ws = wsRef.current;
 					if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer!);
@@ -714,6 +816,11 @@ export function useDictation({ append, destination = "primary", disabled = false
 			return;
 		}
 		if (gen !== genRef.current) return;
+		if (gemini || !tokenPromise) {
+			geminiLanguageRef.current = language;
+			setPhase("recording");
+			return;
+		}
 		let token: string;
 		try {
 			token = await tokenPromise;
@@ -760,6 +867,14 @@ export function useDictation({ append, destination = "primary", disabled = false
 		workletRef.current?.disconnect();
 		workletRef.current = null;
 
+		if (engineRef.current === "gemini") {
+			const frames = geminiPcmRef.current;
+			geminiPcmRef.current = [];
+			if (frames.length === 0) { cleanup(false); return; }
+			runGemini(gen, pcmFramesToWav(frames), geminiLanguageRef.current);
+			return;
+		}
+
 		const ws = wsRef.current;
 		if (ws && ws.readyState === WebSocket.OPEN) {
 			try {
@@ -776,7 +891,27 @@ export function useDictation({ append, destination = "primary", disabled = false
 		} else {
 			cleanup();
 		}
-	}, [cleanup, setPhase]);
+	}, [cleanup, runGemini, setPhase]);
+
+	/** Send the last failed Gemini recording again, into the same destination. */
+	const retry = useCallback(() => {
+		const failed = failedGeminiRef.current;
+		if (!failed || disabledRef.current || phaseRef.current !== "idle") return;
+		if (recordingOwner !== null && recordingOwner !== owner) {
+			setError(DICTATION_ACTIVE_ELSEWHERE);
+			return;
+		}
+		recordingOwner = owner;
+		recordingTarget = destinationRef.current?.append ?? appendRef.current;
+		setDictationActive(true);
+		setError(null);
+		appendFailureRef.current = null;
+		bufferRef.current = [];
+		engineRef.current = "gemini";
+		setEngine("gemini");
+		setPhase("stopping");
+		runGemini(++genRef.current, failed.wav, failed.language);
+	}, [owner, runGemini, setPhase]);
 
 	const cancel = useCallback(() => {
 		if (phaseRef.current === "idle") return;
@@ -858,6 +993,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 		finish,
 		cancel,
 		clearError: () => setError(null),
+		canRetry,
+		retry,
 	};
 }
 
@@ -874,8 +1011,9 @@ export function useDictation({ append, destination = "primary", disabled = false
  *             (full text in the tooltip), cleared on the next click.
  */
 export function DictationBar({ dictation, disabled = false }: { dictation: Dictation; disabled?: boolean }) {
-	const { phase, error, levelRef, toggle, active, clearError, blocked, engine } = dictation;
+	const { phase, error, levelRef, toggle, active, clearError, blocked, engine, canRetry, retry } = dictation;
 	const { open: openSettings } = useSettingsDialog();
+	const geminiKeyless = error === DICTATION_GEMINI_KEYLESS;
 	/** The keyless click (zero-keys wave, owner dictation trio): the errored
 	 *  idle button deep-links Settings → Keys → the Deepgram row and clears
 	 *  the error — the surface is clean when the user returns. Any other
@@ -926,7 +1064,7 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 		return (
 			<Hint
 				// The error line truncates in the button; its tooltip reveals it.
-				label={error ?? "Dictate"}
+				label={error ? (canRetry && retry ? `${error.replace(/\.$/, "")}. Click to retry the transcription.` : error) : "Dictate"}
 				action={error ? undefined : "toggle-dictation"}
 				side="top"
 			>
@@ -938,6 +1076,11 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 						if (keyless) {
 							clearError();
 							openSettings("keys", DEEPGRAM_KEY_ID);
+						} else if (geminiKeyless) {
+							clearError();
+							openSettings("keys");
+						} else if (error && canRetry && retry) {
+							retry();
 						} else {
 							toggle();
 						}
@@ -973,6 +1116,8 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 			<span className="size-1.5 shrink-0 animate-pulse rounded-full bg-destructive" aria-hidden />
 			{engine === "handy" ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" data-testid="dictation-handy">
 				{phase === "stopping" ? "Handy is transcribing…" : "Handy is listening. Speak, then press Stop."}
+			</span> : engine === "gemini" && phase === "stopping" ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" data-testid="dictation-gemini">
+				Gemini is transcribing…
 			</span> : <div ref={meterRef} className="flex h-4 min-w-0 flex-1 items-center gap-[2px]" data-testid="dictation-meter">
 				{levels.slice(-cellCount).map((v, i) => (
 					<span

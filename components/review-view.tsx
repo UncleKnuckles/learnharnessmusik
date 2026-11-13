@@ -10,10 +10,12 @@
  * statically.
  */
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { startDraftSession } from "@/components/new-session";
 import { ReviewCards } from "@/components/review-cards";
 import { useReviewPayload } from "@/components/review-payload-hook";
+import { useUiLanguage } from "@/components/i18n/translator";
+import { localizeReviewPayload, useNodeTranslations } from "@/components/node-translations";
 import { TopBar } from "@/components/top-bar";
 import { NEW_CARDS_PER_DAY, REVIEW_SESSION_MAX, type ReviewItem, type ReviewPayload, type ReviewReminderSettings } from "@/src/core";
 
@@ -267,7 +269,10 @@ function useReminderSettings(): [ReviewReminderSettings | null, (next: Partial<R
 
 export function ReviewView() {
 	const router = useRouter();
-	const payload = useReviewPayload();
+	const rawPayload = useReviewPayload();
+	// Russian node names (music-study fork), when the interface is Russian.
+	const { translations } = useNodeTranslations(useUiLanguage() === "ru", rawPayload);
+	const payload = useMemo(() => localizeReviewPayload(rawPayload, translations), [rawPayload, translations]);
 	const [picked, setPicked] = useState<Set<string> | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [cards, setCards] = useState<ReviewItem[] | null>(null);

@@ -70,6 +70,8 @@ import { SettingsSlider as SettingSlider } from "@/components/settings/controls"
 import Link from "next/link";
 import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
+import { useUiLanguage } from "@/components/i18n/translator";
+import { localizeNodes, useNodeTranslations, type Originals } from "@/components/node-translations";
 import { planCostLabel } from "@/components/usage-format";
 import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
 import { useAppearance } from "@/components/settings/appearance";
@@ -136,10 +138,13 @@ type RenderSettings = GraphRenderSettings;
  * query is empty or matches its name or statement (case-insensitive).
  * Exported for tests; the visibility feed just consumes its verdict.
  */
-export function isNodeVisible(node: Pick<GraphNode, "name" | "statement">, query: string): boolean {
+export function isNodeVisible(node: Pick<GraphNode, "name" | "statement"> & { aliases?: readonly string[] }, query: string): boolean {
 	const q = query.trim().toLowerCase();
 	if (!q) return true;
-	return node.name.toLowerCase().includes(q) || node.statement.toLowerCase().includes(q);
+	// Aliases carry the original wording when names are shown in Russian
+	// (music-study fork), so search matches both languages.
+	return node.name.toLowerCase().includes(q) || node.statement.toLowerCase().includes(q)
+		|| (node.aliases ?? []).some((alias) => alias.toLowerCase().includes(q));
 }
 
 /** In-place sessions patch for a live rename (rename-shuffle fix,
@@ -1057,6 +1062,13 @@ export function GraphView({
 	// Fetch the derived graph. Re-runs when a background pipeline run
 	// finishes (refreshTick) — its merges just landed in the ledger.
 	const [refreshTick, setRefreshTick] = useState(0);
+	// Russian node names (music-study fork): fetched (and translated in the
+	// background) only while the interface is Russian; applied in place.
+	const uiLanguage = useUiLanguage();
+	const nodeTranslations = useNodeTranslations(uiLanguage === "ru", refreshTick);
+	const translationsRef = useRef(nodeTranslations.translations);
+	translationsRef.current = nodeTranslations.translations;
+	const originalsRef = useRef<Originals>(new Map());
 	// The chain table overlay (chains-overlay plan, 2026-09-29) —
 	// component-local: a browsing surface, not graph state.
 	const [chainsOpen, setChainsOpen] = useState(false);
@@ -1077,7 +1089,9 @@ export function GraphView({
 		fetch("/api/graph")
 			.then((res) => res.json() as Promise<GraphSnapshot>)
 			.then((data) => {
-				if (!cancelled) setSnapshot(data);
+				if (cancelled) return;
+				localizeNodes([data.nodes, data.propositions], translationsRef.current, originalsRef.current);
+				setSnapshot(data);
 			})
 			.catch((err) => console.error("[graph] fetch failed:", err));
 		return () => {
@@ -1226,6 +1240,18 @@ export function GraphView({
 		window.addEventListener("lh:source-renamed", onSourceRenamed);
 		return () => { window.removeEventListener("lh:chat-renamed", onRenamed); window.removeEventListener("lh:source-renamed", onSourceRenamed); };
 	}, []);
+
+	/* Russian names arriving after the snapshot: patch the nodes in place
+	   and push the labels through the renderer's label-only channel (the
+	   same no-rebuild rule as the rename labels above). */
+	useEffect(() => {
+		const snap = snapshotRef.current;
+		if (!snap) return;
+		const renamed = localizeNodes([snap.nodes, snap.propositions], nodeTranslations.translations, originalsRef.current);
+		if (renamed.size === 0) return;
+		rendererRef.current?.setNodeLabels(renamed);
+		setLabelTick((t) => t + 1);
+	}, [nodeTranslations.translations]);
 
 	// The node context menu (node interlude): right-click a node → Delete.
 	// The anchor is a zero-size div positioned at the pointer inside the
@@ -1595,6 +1621,11 @@ export function GraphView({
 				/>
 			</div>
 
+			{uiLanguage === "ru" && !isEmpty && (nodeTranslations.error || nodeTranslations.pending > 0) ? (
+				<div data-no-translate data-testid="node-translation-status" className="max-w-72 text-right text-[11px] leading-snug text-muted-foreground/70">
+					{nodeTranslations.error ? `Перевод узлов на русский не удался: ${nodeTranslations.error}` : `Перевожу узлы на русский: осталось ${nodeTranslations.pending}`}
+				</div>
+			) : null}
 			<NotesImportErrors errors={notesImport.errors} />
 			<NotesImportNotices notices={notesImport.notices} />
 			{/* Top-right tail (owner, 2026-09-20): the pipeline cost number —
@@ -1629,6 +1660,12 @@ export function GraphView({
 					className="lh-no-drag absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
 				>
 					<NodeCardText name={selected.node.name} statement={selected.node.statement} />
+					{(() => {
+						const original = originalsRef.current.get(selected.node.id);
+						return original && original.name !== selected.node.name
+							? <div data-no-translate data-testid="node-original-name" className="mt-2 text-[11px] leading-snug text-muted-foreground/70">Оригинал: {original.name}</div>
+							: null;
+					})()}
 					{selected.sourceIds.length > 0 ? (
 						<div className="mt-3 flex flex-col gap-1">
 							<div className="text-xs text-muted-foreground">Sessions</div>
