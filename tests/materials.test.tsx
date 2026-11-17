@@ -170,17 +170,17 @@ describe("the profiler", () => {
 });
 
 describe("the service", () => {
-	it("refuses unknown lessons and unsupported files", () => {
-		assert.equal(service.addUploadedMaterial("chat_missing", { name: "a.pdf", type: "", bytes: new Uint8Array(1) }).ok, false);
+	it("refuses unknown lessons and unsupported files", async () => {
+		assert.equal((await service.addUploadedMaterial("chat_missing", { name: "a.pdf", type: "", bytes: new Uint8Array(1) })).ok, false);
 		const chat = chatStore.createChat("Materials");
-		const bad = service.addUploadedMaterial(chat.id, { name: "deck.pptx", type: "", bytes: new Uint8Array(1) });
+		const bad = await service.addUploadedMaterial(chat.id, { name: "deck.pptx", type: "", bytes: new Uint8Array(1) });
 		assert.equal(bad.ok, false);
 		assert.equal(bad.ok ? 0 : bad.status, 415);
 	});
 
 	it("without a vision model the read fails honestly — the file still serves the tools", async () => {
 		const chat = chatStore.createChat("No vision");
-		const added = service.addUploadedMaterial(chat.id, { name: "notes.md", type: "text/markdown", bytes: new TextEncoder().encode(NOTES) });
+		const added = await service.addUploadedMaterial(chat.id, { name: "notes.md", type: "text/markdown", bytes: new TextEncoder().encode(NOTES) });
 		assert.ok(added.ok);
 		await service.waitForMaterials(chat.id, 5000);
 		const [m] = service.listMaterials(chat.id);
@@ -198,7 +198,7 @@ describe("an EPUB (converted to Markdown when added)", () => {
 
 	it("is stored as its Markdown and then searched, read and described like a text", async () => {
 		const chat = chatStore.createChat("A book");
-		const added = upload(chat.id, "calculus.epub", book({ chapters: { "ch1.xhtml": "<h1>Limits</h1><p>The Link Rule is stated here.</p>" } }));
+		const added = await upload(chat.id, "calculus.epub", book({ chapters: { "ch1.xhtml": "<h1>Limits</h1><p>The Link Rule is stated here.</p>" } }));
 		assert.ok(added.ok);
 		const m = added.value;
 		assert.deepEqual([m.kind, m.name, m.file, m.mimeType], ["epub", "calculus.epub", "source.md", "text/markdown"]);
@@ -214,7 +214,7 @@ describe("an EPUB (converted to Markdown when added)", () => {
 		assert.equal(materialStatusLine({ ...m, status: "ready" }), "book");
 	});
 
-	it("a book that cannot be read is refused in the learner's terms, and nothing is stored", () => {
+	it("a book that cannot be read is refused in the learner's terms, and nothing is stored", async () => {
 		const chat = chatStore.createChat("Refusals");
 		const encryption = '<encryption xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:CipherData><enc:CipherReference URI="OEBPS/ch1.xhtml"/></enc:CipherData></enc:EncryptedData></encryption>';
 		const chapters = { "ch1.xhtml": "<p>Text.</p>" };
@@ -223,8 +223,35 @@ describe("an EPUB (converted to Markdown when added)", () => {
 			["broken.epub", new TextEncoder().encode("not a zip"), 422, "broken.epub is not a readable EPUB"],
 			["blank.epub", book({ chapters: { "cover.xhtml": '<img src="images/cover.jpg"/>' } }), 422, "blank.epub has no readable text"],
 		] as const) {
-			assert.deepEqual(upload(chat.id, name, bytes), { ok: false, status, error });
+			assert.deepEqual(await upload(chat.id, name, bytes), { ok: false, status, error });
 		}
+		assert.deepEqual(service.listMaterials(chat.id), []);
+	});
+});
+
+describe("a Word document and non-UTF-8 text (music-study fork)", () => {
+	it("a .docx is stored as its Markdown; a Windows-1251 .txt as UTF-8", async () => {
+		const { docx, p } = await import("./helpers/docx.ts");
+		const chat = chatStore.createChat("Word");
+		const added = await service.addUploadedMaterial(chat.id, { name: "Formenlehre.docx", type: "", bytes: docx({ body: p(["Satz"], { style: "1" }) + p(["Der Vordersatz."]) }) });
+		assert.ok(added.ok);
+		assert.deepEqual([added.value.kind, added.value.file, added.value.mimeType], ["word", "source.md", "text/markdown"]);
+		assert.equal(fs.readFileSync(materialStore.filePath(chat.id, added.value), "utf8"), "# Satz\n\nDer Vordersatz.");
+		assert.equal(materialStatusLine({ ...added.value, status: "ready" }), "document");
+		const ansi = await service.addUploadedMaterial(chat.id, { name: "notes.txt", type: "text/plain", bytes: new Uint8Array([0xcf, 0xe5, 0xf0, 0xe8, 0xee, 0xe4]) });
+		assert.ok(ansi.ok);
+		assert.equal(fs.readFileSync(materialStore.filePath(chat.id, ansi.value), "utf8"), "Период");
+		await service.waitForMaterials(chat.id, 5000);
+	});
+
+	it("a Word file that cannot be read, or binary text, is refused and nothing is stored", async () => {
+		const chat = chatStore.createChat("Word refusals");
+		assert.deepEqual(await service.addUploadedMaterial(chat.id, { name: "broken.docx", type: "", bytes: new TextEncoder().encode("PK\u0003\u0004 nope") }), {
+			ok: false, status: 422, error: "broken.docx is not a readable Word document.",
+		});
+		const binary = new Uint8Array(64).fill(0x61);
+		binary[3] = 0;
+		assert.deepEqual(await service.addUploadedMaterial(chat.id, { name: "data.txt", type: "", bytes: binary }), { ok: false, status: 422, error: "data.txt isn't plain text" });
 		assert.deepEqual(service.listMaterials(chat.id), []);
 	});
 });

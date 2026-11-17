@@ -56,7 +56,13 @@ export const RU: Record<string, string> = {
 	"Source material for the new lesson": "Материал для нового урока",
 	"This lesson's source material": "Материал этого урока",
 	"No source material yet.": "Материала пока нет.",
-	"PDF, EPUB, text, Markdown, images, or a web link": "PDF, EPUB, текст, Markdown, изображения или ссылка",
+	"PDF, EPUB, Word, text, Markdown, images, or a web link": "PDF, EPUB, Word, текст, Markdown, изображения или ссылка",
+	"reading…": "читаю…",
+	"document": "документ",
+	"book": "книга",
+	"web page": "веб-страница",
+	"image": "изображение",
+	"text": "текст",
 	"or paste a link": "или вставьте ссылку",
 	"Enter an http(s) link": "Введите ссылку http(s)",
 	"The material sets the lesson's target; teaching uses its definitions, notation and terms and cites it.": "Материал задаёт цель урока: учитель использует его определения, обозначения и термины и ссылается на него.",
@@ -476,6 +482,15 @@ export const RU: Record<string, string> = {
 	"Export JSON": "Экспорт JSON",
 	"Check the graph before retrying.": "Проверьте граф перед повтором.",
 	"Invalid import response. Check the graph before retrying.": "Некорректный ответ импорта. Проверьте граф перед повтором.",
+	"This file type isn't supported. Use text, Markdown, Word, PDF, an image, or audio.": "Этот тип файла не поддерживается. Подойдут текст, Markdown, Word, PDF, изображение или аудио.",
+	"This file isn't plain text.": "Это не текстовый файл.",
+	"Could not open this PDF.": "Не удалось открыть этот PDF.",
+	"OCR not supported yet.": "Распознавание сканов (OCR) пока не поддерживается.",
+	"This Word document is password-protected. Save it without a password and try again.": "Документ Word защищён паролем. Сохраните его без пароля и попробуйте снова.",
+	"This Word document has no readable text.": "В документе Word нет текста, который можно прочитать.",
+	"This Word document holds more than 50 MB of text.": "В документе Word больше 50 МБ текста.",
+	"This is not a readable Word document.": "Этот файл не удалось прочитать как документ Word.",
+	"This document is not valid UTF-8 text.": "Этот документ не является текстом.",
 	"Plugin graph actions": "Действия плагинов с графом",
 	"live — statuses derive from your check outcomes": "вживую — статусы берутся из ваших проверок",
 	"Status": "Статус",
@@ -890,6 +905,15 @@ export const RU_RULES: ReadonlyArray<[RegExp, (...groups: string[]) => string]> 
 	[/^(.+) has no thinking levels\.$/, (m) => `У ${m} нет уровней размышления.`],
 	[/^Done picking — (\d+) (?:proposition|propositions) selected$/, (n) => `Готово — выбрано утверждений: ${n}`],
 	[/^(\d+) items? (?:is|are) due for review\.?$/, (n) => `Пора повторить: ${n}`],
+	// Extract files: one line per skipped kind, and "path: message" per file.
+	[/^Skipped (\d+) files? that (?:isn't|aren't) text, Markdown, Word, PDF, images, or audio \((.+)\)\.$/, (n, exts) =>
+		`Пропущено файлов: ${n} — это не текст, Markdown, Word, PDF, изображения или аудио (${exts === "no extension" ? "без расширения" : exts.replace(/no extension/g, "без расширения")}).`],
+	[/^Pictures left out: (\d+)\. Only the text was read\.$/, (n) => `Картинки пропущены (${n}). Прочитан только текст.`],
+	[/^Read as (.+) text\.$/, (enc) => `Прочитано как текст в кодировке ${enc}.`],
+	[/^(.+?\.[A-Za-z0-9]{1,8}): (.+)$/s, (file, message) => {
+		const t = translateText(message);
+		return t === null ? `${file}: ${message}` : `${file}: ${t}`;
+	}],
 ];
 
 /** Translate one UI string, or return null when it is not a known UI string. */

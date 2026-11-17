@@ -158,9 +158,9 @@ it("an off-list type and a non-text file are refused with a short message before
 		const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00]);
 		const { results } = await (await POST(upload([{ name: "deck.pptx", bytes: "plain words" }, { name: "slides.pptx", bytes: pdf }, { name: "notes.txt", bytes: zip }]))).json();
 		assert.deepEqual(results.map((r: { filePath: string; ok: boolean; outcome: string; error: string }) => [r.filePath, r.ok, r.outcome, r.error]).sort(), [
-			["deck.pptx", false, "failed", "This file type isn't supported. Use text, Markdown, PDF, an image, or audio."],
+			["deck.pptx", false, "failed", "This file type isn't supported. Use text, Markdown, Word, PDF, an image, or audio."],
 			["notes.txt", false, "failed", "This file isn't plain text."],
-			["slides.pptx", false, "failed", "This file type isn't supported. Use text, Markdown, PDF, an image, or audio."],
+			["slides.pptx", false, "failed", "This file type isn't supported. Use text, Markdown, Word, PDF, an image, or audio."],
 		]);
 		assert.equal(imports, 0); assert.deepEqual(registered, []);
 	} finally { sourceDirectory.registerImport = realRegister; }
@@ -299,4 +299,40 @@ it("malformed or proxy-truncated multipart is refused before any file enters the
 		assert.deepEqual(await response.json(), { results: [], error: "Could not read the upload. It may be incomplete; please select the files again." });
 	}
 	assert.equal(calls, 0);
+});
+
+// ── Music-study fork: Word documents and text in other encodings (2026-11-17) ──
+
+it("a Word document reaches the pipeline as Markdown; a broken one is refused in plain words", async () => {
+	const received = new Map<string, string>();
+	extraction.importNotes = async ({ filePath, text }) => { received.set(filePath, text); return { nodes: 0, chains: 0 }; };
+	const { docx, p } = await import("./helpers/docx.ts");
+	const fs = await import("node:fs");
+	const word = docx({ body: p(["Периодичность"], { style: "1" }) + p(["Период — ", ["законченное", "b"], " построение."]) });
+	const doc = new Uint8Array(fs.readFileSync(new URL("./fixtures/word/sample.doc", import.meta.url)));
+	const rtf = "{\\rtf1\\ansi\\ansicpg1251{\\fonttbl{\\f0 Times;}}\\f0 \\'cf\\'e5\\'f0\\'e8\\'ee\\'e4\\par}";
+	const { results } = await (await POST(upload([
+		{ name: "Период.docx", bytes: word as Uint8Array<ArrayBuffer> }, { name: "old.doc", bytes: doc }, { name: "notes.rtf", bytes: rtf },
+		{ name: "broken.docx", bytes: "PK\u0003\u0004 not really a zip" },
+	]))).json();
+	const byName = (name: string) => results.find((r: { filePath: string }) => r.filePath === name);
+	assert.equal(received.get("Период.docx"), "# Периодичность\n\nПериод — **законченное** построение.");
+	assert.match(received.get("old.doc") ?? "", /^Период\n\nПериод — это законченное построение/);
+	assert.equal(received.get("notes.rtf"), "Период");
+	assert.equal(byName("broken.docx").error, "This is not a readable Word document.");
+	assert.equal(received.has("broken.docx"), false);
+});
+
+it("UTF-16 and Windows-1251 text files are read, not refused or garbled", async () => {
+	const received = new Map<string, string>();
+	extraction.importNotes = async ({ filePath, text }) => { received.set(filePath, text); return { nodes: 0, chains: 0 }; };
+	const text = "Период: Vordersatz и Nachsatz";
+	const utf16 = new Uint8Array([0xff, 0xfe, ...Buffer.from(text, "utf16le")]);
+	const { results } = await (await POST(upload([
+		{ name: "unicode.txt", bytes: utf16 },
+		{ name: "ansi.txt", bytes: new Uint8Array([0xcf, 0xe5, 0xf0, 0xe8, 0xee, 0xe4, 0x20, 0xe8, 0x20, 0xf1, 0xe5, 0xea, 0xe2, 0xe5, 0xed, 0xf6, 0xe8, 0xff]) },
+	]))).json();
+	assert.ok(results.every((r: { ok: boolean }) => r.ok));
+	assert.equal(received.get("unicode.txt"), text);
+	assert.equal(received.get("ansi.txt"), "Период и секвенция");
 });

@@ -14,7 +14,7 @@
  *   learnharness search <words…>        find graph ideas by name/statement
  *   learnharness node <id>              one idea with its chains and sources
  *   learnharness sessions               teaching / practice sessions
- *   learnharness import <file|dir…>     extract .md/.txt/.pdf, images and audio into the graph
+ *   learnharness import <file|dir…>     extract .md/.txt/.pdf, Word, images and audio into the graph
  *   learnharness ask [--model M] [--effort E] <question…>
  *                                       ask Claude (default: Fable 5.2) with your graph as context
  *   learnharness review [--all]         ideas due for spaced repetition (FSRS-6), plus today's new cards
@@ -32,7 +32,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const FABLE = "claude-fable-5-2";
-const IMPORT_EXT = /\.(?:md|markdown|txt|rst|org|adoc|tex|pdf|png|jpe?g|webp|mp3|wav|m4a|aac|ogg|oga|opus|flac|webm)$/i;
+const IMPORT_EXT = /\.(?:md|markdown|txt|rst|org|adoc|tex|pdf|docx|docm|doc|rtf|png|jpe?g|webp|mp3|wav|m4a|aac|ogg|oga|opus|flac|webm)$/i;
 const MAX_REQUEST_BYTES = 2047 * 1024 * 1024; // server cap: 2 GiB per request
 
 // ─── connection ──────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ function collectFiles(inputs) {
 /** One request per batch under the server's 2 GiB body cap. */
 export async function importFiles(inputs, onResult = () => {}) {
 	const files = collectFiles(inputs);
-	if (files.length === 0) throw new Error("No supported files found (.md, .txt, .pdf, images, audio).");
+	if (files.length === 0) throw new Error("No supported files found (.md, .txt, .pdf, Word, images, audio).");
 	const batches = [];
 	let current = [];
 	let bytes = 0;
@@ -353,7 +353,7 @@ async function runMcp() {
 
 	server.registerTool("import_files", {
 		title: "Import files into the graph",
-		description: "Extract local .md, .txt, .pdf, image (PNG/JPEG/WebP) or audio files, or folders of them, into the knowledge graph. Unchanged files that were already imported are skipped. Paths are on the machine running LearnHarness.",
+		description: "Extract local .md, .txt, .pdf, Word (.docx/.doc/.rtf), image (PNG/JPEG/WebP) or audio files, or folders of them, into the knowledge graph. Unchanged files that were already imported are skipped. Paths are on the machine running LearnHarness.",
 		inputSchema: { paths: z.array(z.string()).min(1) },
 	}, guard(async ({ paths }) => importFiles(paths)));
 
@@ -401,7 +401,7 @@ const USAGE = `  learnharness status                 app, graph and Claude Code 
   learnharness search <words…>        find graph ideas by name or statement
   learnharness node <id>              one idea with its chains and sources
   learnharness sessions               teaching and practice sessions
-  learnharness import <file|dir…>     extract .md/.txt/.pdf, images and audio into the graph
+  learnharness import <file|dir…>     extract .md/.txt/.pdf, Word, images and audio into the graph
   learnharness ask [--model M] [--effort E] <question…>
                                       ask Claude (default Fable 5.2) with your graph as context
   learnharness review [--all]         ideas due for spaced repetition, plus today's new cards

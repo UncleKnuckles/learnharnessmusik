@@ -14,8 +14,10 @@
  */
 
 /** epub: an e-book, stored as the Markdown it was converted to when added
- *  (agent/subagents/epub-markdown.ts) — from then on it reads like text. */
-export type MaterialKind = "pdf" | "epub" | "text" | "image" | "web";
+ *  (agent/subagents/epub-markdown.ts) — from then on it reads like text.
+ *  word: a Word document (.docx, .doc, .rtf), stored the same way
+ *  (agent/subagents/word-markdown.ts; music-study fork, 2026-11-17). */
+export type MaterialKind = "pdf" | "epub" | "word" | "text" | "image" | "web";
 
 /** reading: being profiled · ready: profiled · error: profiling failed
  *  (the raw file still serves the lookup tools). */
@@ -52,6 +54,14 @@ export const MATERIAL_MAX_BYTES = 100 * 1024 * 1024;
 export const UNREADABLE_UPLOAD = `The upload could not be read — it may be larger than ${MATERIAL_MAX_BYTES / 1024 / 1024} MB.`;
 
 const TEXT_EXT = new Set([".txt", ".md", ".markdown", ".text"]);
+const WORD_EXT = new Set([".docx", ".docm", ".doc", ".rtf"]);
+const WORD_MIME = new Set([
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-word.document.macroenabled.12",
+	"application/msword",
+	"application/rtf",
+	"text/rtf",
+]);
 const IMAGE_EXT: Record<string, string> = {
 	".png": "image/png",
 	".jpg": "image/jpeg",
@@ -65,6 +75,7 @@ export function materialKindFor(fileName: string, mimeType = ""): Exclude<Materi
 	const ext = fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
 	if (ext === ".pdf" || mimeType === "application/pdf") return "pdf";
 	if (ext === ".epub" || mimeType === "application/epub+zip") return "epub";
+	if (WORD_EXT.has(ext) || WORD_MIME.has(mimeType.toLowerCase())) return "word";
 	if (TEXT_EXT.has(ext) || mimeType === "text/plain" || mimeType === "text/markdown") return "text";
 	if (ext in IMAGE_EXT || mimeType.startsWith("image/")) return "image";
 	return null;
@@ -77,7 +88,7 @@ export function imageMimeType(fileName: string): string {
 }
 
 /** What the attach control accepts (the file picker's `accept`). */
-export const MATERIAL_ACCEPT = ".pdf,.epub,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif";
+export const MATERIAL_ACCEPT = ".pdf,.epub,.docx,.docm,.doc,.rtf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif";
 
 /** Is this an http(s) address a link material can fetch? Pure. */
 export function isMaterialUrl(value: string): boolean {
@@ -106,7 +117,9 @@ export function materialBlock(m: LessonMaterial, path: string): string {
 				? `web page, ${m.url}`
 				: m.kind === "epub"
 					? "e-book (EPUB converted to Markdown; figures omitted)"
-					: m.kind;
+					: m.kind === "word"
+						? "Word document (converted to Markdown; pictures omitted)"
+						: m.kind;
 	const head = `<material id="${m.id}" name="${m.name}" kind="${kind}" path="${path}"${m.addedMidLesson ? ' added="during the lesson"' : ""}>`;
 	const body =
 		m.status === "ready" && m.profile

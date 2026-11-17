@@ -14,15 +14,16 @@ export const MAX_IMPORT_BODY_BYTES = MAX_IMPORT_BYTES + MiB;
 export const MAX_PDF_PAGES = TESTING ? 1000 : 1_000_000;
 
 /** The file types "Extract files" takes; the client check, server check and picker `accept` all derive from this list.
- * Text and PDF as upstream, plus images (vision transcription) and audio (Deepgram transcription). */
+ * Text and PDF as upstream, plus Word documents, images (vision transcription) and audio (Deepgram transcription). */
 const IMPORT_EXTENSION_NAMES = [
 	"txt", "md", "markdown", "rst", "org", "adoc", "tex", "pdf",
+	"docx", "docm", "doc", "rtf",
 	"png", "jpg", "jpeg", "webp",
 	"mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "webm",
 ];
 export const IMPORT_EXTENSIONS = new RegExp(`\\.(?:${IMPORT_EXTENSION_NAMES.join("|")})$`, "i");
 export const IMPORT_ACCEPT = IMPORT_EXTENSION_NAMES.map((name) => `.${name}`).join(",");
-export const UNSUPPORTED_TYPE_MESSAGE = "This file type isn't supported. Use text, Markdown, PDF, an image, or audio.";
+export const UNSUPPORTED_TYPE_MESSAGE = "This file type isn't supported. Use text, Markdown, Word, PDF, an image, or audio.";
 
 /** "25 MB", "2 GB" — the refusal text shown beside a file. */
 export function importLimitLabel(bytes: number = MAX_IMPORT_BYTES): string {
