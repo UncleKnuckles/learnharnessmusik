@@ -62,9 +62,11 @@ export function decodeCodePage(bytes: Uint8Array, encoding: "windows-1251" | "wi
 	return singleByte(bytes, encoding === "windows-1251" ? CP1251_HIGH : CP1252_HIGH);
 }
 
-/** UTF-16 (BE is byte-swapped to LE: small-ICU runtimes ship only LE). */
+/** UTF-16 (BE is byte-swapped to LE: small-ICU runtimes ship only LE);
+ *  null when the bytes are not whole UTF-16 text (an odd length, a lone surrogate). */
 function utf16(bytes: Uint8Array, encoding: "utf-16le" | "utf-16be"): string | null {
-	let le = bytes.subarray(0, bytes.length - (bytes.length % 2));
+	if (bytes.length % 2 !== 0) return null;
+	let le = bytes;
 	if (encoding === "utf-16be") {
 		le = new Uint8Array(le);
 		for (let i = 0; i + 1 < le.length; i += 2) { const b = le[i]!; le[i] = le[i + 1]!; le[i + 1] = b; }
