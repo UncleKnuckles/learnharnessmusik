@@ -44,10 +44,10 @@ it("errors/notices keep selection order across appends even when requests settle
 it("unsupported-only directories are never sent; picker .DS_Store is ignored and eligible siblings proceed", async () => {
 	const paths: string[] = [];
 	const queue = createNotesImportQueue(async ([f]) => { const path = f!.webkitRelativePath || f!.name; paths.push(path); return [success(path)]; });
-	queue.append([file(".DS_Store", "Root/.DS_Store"), file("a.docx", "Root/Docs/a.docx"), file("notes.md", "Root/Sub/notes.md"), file("bad.pptx", "../bad.pptx")]);
+	queue.append([file(".DS_Store", "Root/.DS_Store"), file("a.xlsx", "Root/Docs/a.xlsx"), file("notes.md", "Root/Sub/notes.md"), file("bad.pptx", "../bad.pptx")]);
 	await tick();
 	assert.deepEqual(paths, ["Root/Sub/notes.md"]);
-	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, PDF, images, or audio (.docx).", "Skipped 1 file with a name the import can't use (e.g. a ':' in the name)."]);
+	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, Word, PDF, images, or audio (.xlsx).", "Skipped 1 file with a name the import can't use (e.g. a ':' in the name)."]);
 });
 
 it("folder picks skip dot-directories such as .obsidian/ silently, even when the chosen root itself is hidden", async () => {
@@ -82,7 +82,7 @@ it("individual file picks still import hidden notes and report unsupported dotfi
 	queue.append([file(".draft.md"), file(".summary.txt"), file(".DS_Store")]);
 	await tick();
 	assert.deepEqual(paths, [".draft.md", ".summary.txt"]);
-	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, PDF, images, or audio (no extension)."]);
+	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, Word, PDF, images, or audio (no extension)."]);
 });
 
 it("the queue uploads every accepted extension, including the expanded text types in uppercase", async () => {
@@ -97,9 +97,9 @@ it("the queue uploads every accepted extension, including the expanded text type
 
 it("the file type check comes before the size check", () => {
 	const queue = createNotesImportQueue(async ([f]) => [success(f!.name)]);
-	const huge = file("huge.docx"); Object.defineProperty(huge, "size", { value: Number.MAX_SAFE_INTEGER });
+	const huge = file("huge.xlsx"); Object.defineProperty(huge, "size", { value: Number.MAX_SAFE_INTEGER });
 	queue.append([huge]);
-	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, PDF, images, or audio (.docx)."]);
+	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, Word, PDF, images, or audio (.xlsx)."]);
 });
 
 it("a folder pick of unsupported files gives one summary line with the count and each distinct type once, in first-seen order", async () => {
@@ -112,24 +112,24 @@ it("a folder pick of unsupported files gives one summary line with the count and
 		file("Util.JAVA", "Course/src/Util.JAVA"),
 		file("week2.pptx", "Course/Week2/week2.pptx"),
 		file("Week2.PPTX", "Course/Week2/Week2.PPTX"),
-		file("syllabus.doc", "Course/syllabus.doc"),
+		file("syllabus.xls", "Course/syllabus.xls"),
 		file("notes.md", "Course/notes.md"),
 	]);
 	await tick();
 	assert.deepEqual(paths, ["Course/notes.md"]);
-	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 7 files that aren't text, Markdown, PDF, images, or audio (.java, .class, .ppt, .pptx, .doc)."]);
+	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 7 files that aren't text, Markdown, Word, PDF, images, or audio (.java, .class, .ppt, .pptx, .xls)."]);
 });
 
 it("one unsupported file uses the singular line; a file with no extension is listed as no extension", () => {
 	const single = createNotesImportQueue(async ([f]) => [success(f!.name)]);
 	single.append([file("deck.pptx")]);
-	assert.deepEqual(single.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, PDF, images, or audio (.pptx)."]);
+	assert.deepEqual(single.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, Word, PDF, images, or audio (.pptx)."]);
 	const mixed = createNotesImportQueue(async ([f]) => [success(f!.name)]);
 	mixed.append([file("Main.java", "Course/Main.java"), file("Makefile", "Course/Makefile")]);
-	assert.deepEqual(mixed.getSnapshot().errors, ["Skipped 2 files that aren't text, Markdown, PDF, images, or audio (.java, no extension)."]);
+	assert.deepEqual(mixed.getSnapshot().errors, ["Skipped 2 files that aren't text, Markdown, Word, PDF, images, or audio (.java, no extension)."]);
 	const trailingDot = createNotesImportQueue(async ([f]) => [success(f!.name)]);
 	trailingDot.append([file("notes.")]);
-	assert.deepEqual(trailingDot.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, PDF, images, or audio (no extension)."]);
+	assert.deepEqual(trailingDot.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, Word, PDF, images, or audio (no extension)."]);
 });
 
 it("names the import can't use are counted into one line, and path safety is checked before type", async () => {
@@ -161,7 +161,7 @@ it("in one pick the too-big file keeps its own line, hidden files stay silent, s
 	await tick();
 	assert.deepEqual(paths, ["Course/notes.md", "Course/slides.pdf"]);
 	assert.deepEqual(queue.getSnapshot().errors, [
-		"Skipped 2 files that aren't text, Markdown, PDF, images, or audio (.java, .class).",
+		"Skipped 2 files that aren't text, Markdown, Word, PDF, images, or audio (.java, .class).",
 		"Course/big.md: Too big. Max 25 MB.",
 		"Skipped 2 files with names the import can't use (e.g. a ':' in the name).",
 	]);
@@ -171,8 +171,8 @@ it("each pick gets its own summary lines, so a later pick during an import adds 
 	let resolve!: (rows: NotesImportResult[]) => void;
 	const queue = createNotesImportQueue(() => new Promise((done) => { resolve = done; }));
 	queue.append([file("notes.md"), file("a.ppt")]);
-	queue.append([file("b.doc"), file("c.doc")]);
-	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, PDF, images, or audio (.ppt).", "Skipped 2 files that aren't text, Markdown, PDF, images, or audio (.doc)."]);
+	queue.append([file("b.xls"), file("c.xls")]);
+	assert.deepEqual(queue.getSnapshot().errors, ["Skipped 1 file that isn't text, Markdown, Word, PDF, images, or audio (.ppt).", "Skipped 2 files that aren't text, Markdown, Word, PDF, images, or audio (.xls)."]);
 	resolve([success("notes.md")]);
 	await tick();
 	assert.equal(queue.getSnapshot().importing, false);

@@ -2,6 +2,8 @@ import { readBoundedFormData, FormBodyLimitError } from "../../lib/bounded-form-
 import { convertPdf } from "../agent/subagents/pdf-ops.ts";
 import { joinPages } from "../agent/subagents/pdf-markdown.ts";
 import { PluginHostError } from "./plugin-host.ts";
+import { WORD_FILE, wordRefusal, wordToMarkdown } from "../agent/subagents/word-markdown.ts";
+import { decodeTextBytes } from "../core/text-decode.ts";
 
 export const MAX_DOCUMENT_BODY_BYTES = 26 * 1024 * 1024;
 export const MAX_DOCUMENT_FILE_BYTES = 25 * 1024 * 1024;
@@ -61,9 +63,25 @@ export function createPluginDocumentConverter(deps: { convertPdf?: typeof conver
 					markdown = joinPages(pdf.pages);
 					notices.push("PDF text extraction may contain errors; check the result against the original.");
 					if (skipped) notices.push(`Skipped ${skipped} image-only ${skipped === 1 ? "page" : "pages"}; OCR is not supported.`);
+				} else if (WORD_FILE.test(file.name)) {
+					// Music-study fork: Word documents (.docx, .doc, .rtf) become Markdown.
+					try {
+						const word = await wordToMarkdown(bytes);
+						markdown = word.markdown;
+						if (word.figures > 0) notices.push(`Pictures left out: ${word.figures}. Only the text was read.`);
+					} catch (error) {
+						signal.throwIfAborted();
+						throw new PluginHostError(400, wordRefusal(error));
+					}
 				} else {
 					try { markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-					catch { throw new PluginHostError(400, "This document is not valid UTF-8 text."); }
+					catch {
+						// Music-study fork: UTF-16 and Windows code pages (1251 Cyrillic, 1252 Western) too.
+						const decoded = decodeTextBytes(bytes);
+						if (!decoded) throw new PluginHostError(400, "This document is not valid UTF-8 text.");
+						markdown = decoded.text;
+						notices.push(`Read as ${decoded.encoding} text.`);
+					}
 					if (CONTROL.test(markdown)) throw new PluginHostError(400, "This document contains binary or control characters, not supported text.");
 					if (!markdown.trim()) throw new PluginHostError(400, "This document contains no text.");
 				}

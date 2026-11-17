@@ -38,7 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 	if (files.length === 0) return Response.json({ error: 'Send the files as multipart "file" fields, or JSON {url}' }, { status: 400 });
 	const added: LessonMaterial[] = [];
 	for (const file of files) {
-		const result = addUploadedMaterial(id, { name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) });
+		const result = await addUploadedMaterial(id, { name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) });
 		if (!result.ok) return Response.json({ error: result.error, materials: added }, { status: result.status });
 		added.push(result.value);
 	}

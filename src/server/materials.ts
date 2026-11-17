@@ -13,6 +13,8 @@ import { resolveRoleSpec } from "../core/settings-resolution.ts";
 import { piEngineForSpec } from "../agent/models.ts";
 import { profileMaterial } from "../agent/subagents/material-profiler.ts";
 import { EPUB_MAX_TEXT_BYTES, EpubError, epubToMarkdown } from "../agent/subagents/epub-markdown.ts";
+import { WordError, wordRefusal, wordToMarkdown } from "../agent/subagents/word-markdown.ts";
+import { decodeTextBytes } from "../core/text-decode.ts";
 import { fetchAndExtract } from "../agent/tools/web.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import { stores } from "./stores.ts";
@@ -116,11 +118,13 @@ function epubRefusal(name: string, err: unknown): { ok: false; status: number; e
 	return { ok: false, status: 422, error: `${name} is not a readable EPUB` };
 }
 
-/** What the lesson keeps of an upload: the file itself — or, for an EPUB, the Markdown it converts to. */
-function storedCopy(
+/** What the lesson keeps of an upload: the file itself — or, for an EPUB or
+ *  a Word document, the Markdown it converts to; text is kept as UTF-8
+ *  whatever its encoding (core/text-decode.ts), so every reader can take it. */
+async function storedCopy(
 	kind: Exclude<LessonMaterial["kind"], "web">,
 	file: { name: string; type: string; bytes: Uint8Array },
-): Result<{ ext: string; bytes: Uint8Array; mimeType?: string }> {
+): Promise<Result<{ ext: string; bytes: Uint8Array; mimeType?: string }>> {
 	if (kind === "epub") {
 		try {
 			return { ok: true, value: { ext: ".md", bytes: new TextEncoder().encode(epubToMarkdown(file.bytes).markdown), mimeType: "text/markdown" } };
@@ -128,10 +132,27 @@ function storedCopy(
 			return epubRefusal(file.name, err);
 		}
 	}
+	if (kind === "word") {
+		try {
+			const { markdown } = await wordToMarkdown(file.bytes);
+			return { ok: true, value: { ext: ".md", bytes: new TextEncoder().encode(markdown), mimeType: "text/markdown" } };
+		} catch (err) {
+			const status = err instanceof WordError && err.reason === "too-large" ? 413 : 422;
+			return { ok: false, status, error: wordRefusal(err, file.name) };
+		}
+	}
+	if (kind === "text") {
+		const decoded = decodeTextBytes(file.bytes);
+		if (!decoded) return { ok: false, status: 422, error: `${file.name} isn't plain text` };
+		const ext = path.extname(file.name) || ".txt";
+		// Already UTF-8: the bytes as they came. Otherwise the decoded text, re-encoded.
+		const bytes = decoded.encoding === "utf-8" ? file.bytes : new TextEncoder().encode(decoded.text);
+		return { ok: true, value: { ext, bytes, mimeType: file.type || undefined } };
+	}
 	return {
 		ok: true,
 		value: {
-			ext: path.extname(file.name) || (kind === "pdf" ? ".pdf" : kind === "text" ? ".txt" : ".png"),
+			ext: path.extname(file.name) || (kind === "pdf" ? ".pdf" : ".png"),
 			bytes: file.bytes,
 			mimeType: kind === "image" ? (file.type.startsWith("image/") ? file.type : imageMimeType(file.name)) : file.type || undefined,
 		},
@@ -139,18 +160,18 @@ function storedCopy(
 }
 
 /** Add an uploaded file. */
-export function addUploadedMaterial(
+export async function addUploadedMaterial(
 	chatId: string,
 	file: { name: string; type: string; bytes: Uint8Array },
-): Result<LessonMaterial> {
+): Promise<Result<LessonMaterial>> {
 	if (!lessonExists(chatId)) return { ok: false, status: 404, error: "Unknown chat" };
 	const kind = materialKindFor(file.name, file.type);
-	if (!kind) return { ok: false, status: 415, error: `Unsupported file type: ${file.name} (PDF, EPUB, text, Markdown or an image)` };
+	if (!kind) return { ok: false, status: 415, error: `Unsupported file type: ${file.name} (PDF, EPUB, Word, text, Markdown or an image)` };
 	if (file.bytes.byteLength === 0) return { ok: false, status: 400, error: `${file.name} is empty` };
 	if (file.bytes.byteLength > MATERIAL_MAX_BYTES) {
 		return { ok: false, status: 413, error: `${file.name} is larger than ${MATERIAL_MAX_BYTES / 1024 / 1024} MB` };
 	}
-	const copy = storedCopy(kind, file);
+	const copy = await storedCopy(kind, file);
 	if (!copy.ok) return copy;
 	const material = stores.materialStore.add(chatId, {
 		kind,

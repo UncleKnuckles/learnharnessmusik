@@ -12,7 +12,7 @@ const extensionLabel = (name: string): string => {
 };
 /** One line per reason for a whole pick, so a big folder cannot flood the error list. */
 const unsupportedSummary = (extensions: readonly string[]): string =>
-	`Skipped ${extensions.length} ${extensions.length === 1 ? "file that isn't" : "files that aren't"} text, Markdown, PDF, images, or audio (${[...new Set(extensions)].join(", ")}).`;
+	`Skipped ${extensions.length} ${extensions.length === 1 ? "file that isn't" : "files that aren't"} text, Markdown, Word, PDF, images, or audio (${[...new Set(extensions)].join(", ")}).`;
 const unsafeSummary = (count: number): string =>
 	`Skipped ${count} ${count === 1 ? "file with a name" : "files with names"} the import can't use (e.g. a ':' in the name).`;
 export interface ImportQueueSnapshot {

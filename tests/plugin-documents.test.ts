@@ -51,9 +51,16 @@ it("returns strict UTF-8 text unchanged for arbitrary suffixes/MIME, Unicode and
 	assert.equal((await service.convert(upload("\uFEFFBOM text"), signal())).markdown, "BOM text", "default TextDecoder BOM handling");
 });
 
-it("refuses malformed UTF-8, binary and every disallowed C0/DEL/C1 control; recovers each time", async () => {
+it("refuses binary and every disallowed C0/DEL/C1 control; recovers each time", async () => {
 	const service = createPluginDocumentConverter();
-	for (const bytes of [new Uint8Array([0xff]), new Uint8Array([0xc0, 0xaf]), new Uint8Array([0xe2, 0x82]), new Uint8Array([0xed, 0xa0, 0x80])]) {
+	// Music-study fork: bytes that are not UTF-8 are read through a Windows code page instead.
+	for (const [bytes, text, encoding] of [
+		[[0x47, 0x72, 0xfc, 0xdf, 0x65, 0x20, 0x61, 0x75, 0x73, 0x20, 0x4b, 0xf6, 0x6c, 0x6e], "Grüße aus Köln", "windows-1252"],
+		[[0xcf, 0xe5, 0xf0, 0xe8, 0xee, 0xe4], "Период", "windows-1251"],
+	] as const) {
+		assert.deepEqual(await service.convert(upload(new Uint8Array(bytes)), signal()), { name: "notes.md", markdown: text, notices: [`Read as ${encoding} text.`] });
+	}
+	for (const bytes of [new Uint8Array([0x61, 0x00, 0xff]), new Uint8Array([0x00, 0xc0, 0xaf, 0x00])]) {
 		await assert.rejects(service.convert(upload(bytes), signal()), refusal(400, /UTF-8/));
 		await recovered(service);
 	}

@@ -5,6 +5,8 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute, type ImageFileResult } from "../tool-execute.ts";
 import { resolveSourcePath } from "./fs-shared.ts";
 import { detectSupportedImageMimeTypeFromFile, processImage } from "../image-processing/index.ts";
+import { decodeTextBytes } from "../../core/text-decode.ts";
+import { WORD_FILE, wordRefusal, wordToMarkdown } from "../subagents/word-markdown.ts";
 
 /**
  * The read tool — sources v0 (2026-09): a Node port of pi's read semantics
@@ -14,7 +16,8 @@ import { detectSupportedImageMimeTypeFromFile, processImage } from "../image-pro
  * sensitive-location/credential denials and optional folder boundary in fs-shared.ts; this is not a sandbox.
  *
  * Ported behaviors (mirroring pi's dist/core/tools/read.js):
- * - text files: utf-8, offset (1-indexed) / limit slicing, and the
+ * - text files: utf-8 (the fork also decodes UTF-16, Windows code pages
+ *   and Word documents), offset (1-indexed) / limit slicing, and the
  *   2000-line / 50KB truncation ceiling with actionable "use offset=N"
  *   continuation notices — a huge file never silently floods the context.
  * - image files (jpg/png/gif/webp/bmp): returned as native image content
@@ -78,6 +81,20 @@ function readTextSlice(text: string, offset: number | undefined, limit: number |
 	return `${selected.join("\n")}\n\n[Showing lines ${startLine + 1}-${endLineDisplay} of ${totalLines} (${reason}). Use offset=${endLineDisplay + 1} to continue.]`;
 }
 
+/** A file's text: a Word document as Markdown, other text in whatever
+ *  encoding it was saved in (UTF-16 and Windows code pages too — music-study
+ *  fork, 2026-11-17). Undecodable bytes read as UTF-8, as before. */
+async function fileText(absolute: string, buffer: Buffer): Promise<string> {
+	if (WORD_FILE.test(absolute) && !buffer.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+		try {
+			return (await wordToMarkdown(new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength))).markdown;
+		} catch (err) {
+			throw new Error(wordRefusal(err, absolute));
+		}
+	}
+	return decodeTextBytes(buffer)?.text ?? buffer.toString("utf-8");
+}
+
 /**
  * The read tool, shared verbatim by the prober and the teacher. Sources v1
  * (2026-09-19): the description is pi-verbatim (user: copy tool usage
@@ -95,7 +112,7 @@ export function createReadTool(model?: ReadModel): AgentTool<typeof readInput> {
 	return {
 		name: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50.0KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. File access settings and protected-location denials apply; use ls without a path to discover allowed folders when restricted.`,
+		description: `Read the contents of a file. Supports text files, Word documents (docx, doc, rtf — read as Markdown text) and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50.0KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. File access settings and protected-location denials apply; use ls without a path to discover allowed folders when restricted.`,
 		parameters: readInput,
 		execute: serverExecute("read", readInput, async ({ path: rawPath, offset, limit }, { signal }): Promise<string | ImageFileResult> => {
 			const absolute = resolveSourcePath(rawPath);
@@ -115,7 +132,7 @@ export function createReadTool(model?: ReadModel): AgentTool<typeof readInput> {
 					...(processed.ok ? { images: [{ data: processed.data, mimeType: processed.mimeType }] } : {}),
 				};
 			}
-			return readTextSlice(buffer.toString("utf-8"), offset, limit);
+			return readTextSlice(await fileText(absolute, buffer), offset, limit);
 		}),
 	};
 }

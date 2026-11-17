@@ -9,10 +9,12 @@
  *
  * Only filename extensions listed in lib/notes-import-limits.ts are taken.
  * Among those files, a PDF (spotted by its %PDF- header) is converted to
- * Markdown first. Other files are decoded as UTF-8 unless a zero byte in
- * their first 8 KiB causes refusal. This is a binary-file heuristic, not
- * complete text or encoding validation. These refusals, and PDFs with
- * nothing to extract, occur before any source record or model call.
+ * Markdown first, and so is a Word document (.docx, .doc, .rtf — music-study
+ * fork). Other files are text: UTF-8, UTF-16 or a Windows code page, picked
+ * from the bytes (core/text-decode.ts); zero bytes in the first 8 KiB that
+ * are not UTF-16 cause refusal. This is a binary-file heuristic, not
+ * complete text validation. These refusals, and PDFs with nothing to
+ * extract, occur before any source record or model call.
  *
  * Small concurrency cap: the model calls are the slow part, and a burst of
  * 25 simultaneous runs would trip provider rate limits — a 3-wide worker
@@ -22,7 +24,7 @@
  */
 import {
 	alreadyImported, contentHash, convertPdf, detectAudio, detectImage, extraction, joinPages, MediaImportError,
-	NotesImportError, recordImported, sourceDirectory, transcribeAudio, transcribeImage,
+	NotesImportError, recordImported, sourceDirectory, transcribeAudio, transcribeImage, WORD_FILE, wordRefusal, wordToMarkdown,
 } from "@/src/server";
 import {
 	IMPORT_EXTENSIONS, MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, MAX_PDF_PAGES, TOO_BIG_MESSAGE, TOO_LONG_MESSAGE,
@@ -30,6 +32,7 @@ import {
 } from "@/lib/notes-import-limits.ts";
 import { FormBodyLimitError, readBoundedFormData } from "@/lib/bounded-form-data.ts";
 import {
+	decodeTextBytes,
 	emit,
 	ModelsNotConfiguredError,
 	PROVIDER_KEY_MISSING_CODE,
@@ -63,8 +66,8 @@ const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
 type NotesFile = { kind: "notes"; text: string; notice?: string } | { kind: "refused"; error: string };
 
 /** A PDF becomes page-marked Markdown; an image is transcribed by the vision
- *  model and audio by Deepgram (music-study fork); any other accepted file is
- *  read as text. */
+ *  model, audio by Deepgram, and a Word document converted to Markdown
+ *  (music-study fork); any other accepted file is read as text. */
 async function readNotesFile(file: File, bytes: Uint8Array): Promise<NotesFile> {
 	if (!IMPORT_EXTENSIONS.test(file.name)) return { kind: "refused", error: UNSUPPORTED_TYPE_MESSAGE };
 	const image = detectImage(bytes);
@@ -77,6 +80,17 @@ async function readNotesFile(file: File, bytes: Uint8Array): Promise<NotesFile> 
 			throw err;
 		}
 	}
+	if (WORD_FILE.test(file.name) && !PDF_MAGIC.every((byte, i) => bytes[i] === byte)) {
+		try {
+			const word = await wordToMarkdown(bytes);
+			const notice = word.figures > 0
+				? `Pictures left out: ${word.figures}. Only the text was read.`
+				: undefined;
+			return { kind: "notes", text: word.markdown, ...(notice ? { notice } : {}) };
+		} catch (err) {
+			return { kind: "refused", error: wordRefusal(err) };
+		}
+	}
 	if (!PDF_MAGIC.every((byte, i) => bytes[i] === byte)) {
 		const audio = /\.(?:md|markdown|txt|rst|org|adoc|tex)$/i.test(file.name) ? null : detectAudio(bytes, file.name);
 		if (audio) {
@@ -87,8 +101,9 @@ async function readNotesFile(file: File, bytes: Uint8Array): Promise<NotesFile> 
 				throw err;
 			}
 		}
-		if (bytes.subarray(0, 8192).includes(0)) return { kind: "refused", error: "This file isn't plain text." };
-		return { kind: "notes", text: new TextDecoder().decode(bytes) };
+		const decoded = decodeTextBytes(bytes);
+		if (!decoded) return { kind: "refused", error: "This file isn't plain text." };
+		return { kind: "notes", text: decoded.text };
 	}
 	const pdf = await convertPdf(bytes, MAX_PDF_PAGES);
 	switch (pdf.kind) {

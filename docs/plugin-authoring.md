@@ -489,9 +489,12 @@ DTO, path/URL/token input, or file-picker API. Use a native input and this helpe
 - A `%PDF-` signature **or** `.pdf` suffix selects the native deterministic PDF engine
   and page markers. Invalid PDFs do not fall back to text. Mixed image-only pages are
   skipped with notices; all-image PDFs are refused distinctly from blank PDFs. No OCR.
-- Everything else is strict UTF-8, irrespective of extension/MIME. Binary, empty input
-  and controls other than Tab/LF/CR are refused (other C0, DEL and C1). HTML/DOCX are
-  not converted into semantic Markdown.
+- A `.docx`, `.docm`, `.doc` or `.rtf` suffix selects the Word engine (music-study fork):
+  headings, lists, tables and footnotes become Markdown; pictures are left out with a notice.
+- Everything else is text, irrespective of extension/MIME: UTF-8 first, then UTF-16 or a
+  Windows code page (1251 Cyrillic, 1252 Western), with a notice naming the encoding
+  (music-study fork). Binary, empty input and controls other than Tab/LF/CR are refused
+  (other C0, DEL and C1). HTML is not converted into semantic Markdown.
 - Caps: **25 MiB file**, **26 MiB actual multipart body**, **1,000 PDF pages** checked
   after opening, **2 MiB final UTF-8 Markdown** including markers. Refuse, never truncate.
 - **One global conversion** across plugins; competing requests fail fast as busy, no
